@@ -130,7 +130,8 @@ def main(
 
     # %%
 
-    y_offset = 50
+    y_scroll = 50
+    scroll_momentum = 0
 
     while True:
         for event in pygame.event.get():
@@ -140,19 +141,27 @@ def main(
                 layout.layout(window.size[0] * 0.9)
             elif event.type == pg.KEYDOWN:
                 if event.key == pg.K_j:
-                    y_offset -= 30
+                    scroll_momentum = -30
                 elif event.key == pg.K_k:
-                    y_offset += 30
+                    scroll_momentum = +30
                 elif event.key == pg.K_MINUS:
                     ...
                 elif event.key == pg.K_PLUS or event.key == pg.K_EQUALS:
                     ...
+            elif event.type == pg.MOUSEBUTTONDOWN:
+                if event.button == 4:
+                    scroll_momentum += 10
+                elif event.button == 5:
+                    scroll_momentum -= 10
 
-        y_offset = clamp(y_offset, -layout.size[1] + screen.get_height() - 50, 50)
+        y_scroll += scroll_momentum
+        scroll_momentum *= 0.8
+
+        y_scroll = clamp(y_scroll, -layout.size[1] + screen.get_height() - 50, 50)
 
         screen.fill(background_color)
 
-        layout.render(0, y_offset, screen)
+        layout.render(0, y_scroll, screen)
 
         fps = clock.get_fps()
         fps_surf = main_font.render(f"{fps:.2f}", 20, (0, 0, 0))
