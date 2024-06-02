@@ -167,6 +167,18 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
         for child in node.children:
             yield from flatten(child, style)
         yield InlineText("", style, hard_break=True)
+    elif isinstance(node, marko.block.List):
+        for i, child in enumerate(node.children, start=node.start):
+            if node.ordered:
+                prefix = f"{i}. "
+            else:
+                prefix = node.bullet + " "
+            yield InlineText(prefix, style)
+            yield from flatten(child, style)
+    elif isinstance(node, marko.block.ListItem):
+        for child in node.children:
+            yield from flatten(child, style)
+        yield InlineText("", style, hard_break=True)
     elif isinstance(node, marko.inline.RawText):
         yield InlineText(node.children, style)
     elif isinstance(node, marko.inline.LineBreak):
