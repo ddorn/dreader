@@ -64,6 +64,10 @@ class TextParts:
         return sum(part[1].height for part in self.parts)
 
     @property
+    def bottom(self):
+        return self.parts[-1][1].bottom
+
+    @property
     def continuation_pos(self):
         return self.parts[-1][1].topright
 

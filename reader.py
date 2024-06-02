@@ -124,7 +124,8 @@ def main(
     # %% Create the layout
     style = Style(main_font, font_size, text_color)
     layout = Document.from_marko(docu, style)
-    layout.layout(window.size[0] * 0.9)
+    margin = 0.1
+    layout.layout(window.size[0] * (1 - margin))
 
     print(layout.children[:10])
 
@@ -138,7 +139,7 @@ def main(
             if event.type == pg.QUIT:
                 sys.exit()
             elif event.type == pg.WINDOWRESIZED:
-                layout.layout(window.size[0] * 0.9)
+                layout.layout(window.size[0] * (1 - margin))
             elif event.type == pg.KEYDOWN:
                 if event.key == pg.K_j:
                     scroll_momentum = -30
@@ -161,7 +162,7 @@ def main(
 
         screen.fill(background_color)
 
-        layout.render(0, y_scroll, screen)
+        layout.render(window.size[0] * margin / 2, y_scroll, screen)
 
         fps = clock.get_fps()
         fps_surf = main_font.render(f"{fps:.2f}", 20, (0, 0, 0))
