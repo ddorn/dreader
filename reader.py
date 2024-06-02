@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # %%
 
+from functools import wraps
 import hashlib
 import json
 import os
@@ -27,7 +28,7 @@ from pprint import pprint
 import sys
 import threading
 import time
-from typing import Annotated
+from typing import Annotated, Callable, ParamSpec
 from pathlib import Path
 import marko.ast_renderer
 import marko.inline
@@ -70,18 +71,21 @@ def clamp(value, minimum, maximum):
     return value
 
 
-def to_filename(name: str, max_len: int = 50) -> str:
+def to_filename(name: str, max_len: int = 80) -> str:
     new = "".join(c if c.isalnum() else "_" for c in name[:max_len])
     return new.replace("__", "_").strip("_")
 
 
-def threaded(func):
-    def wrapper(*args, **kwargs):
+P = ParamSpec("P")
+
+
+def threaded(func: Callable[P, None]) -> Callable[P, threading.Thread]:
+    def wrapper(*args, **kwargs) -> threading.Thread:
         thread = threading.Thread(target=func, args=args, kwargs=kwargs)
         thread.start()
         return thread
 
-    return wrapper
+    return wrapper  # type: ignore
 
 
 class TTS:
@@ -100,12 +104,13 @@ class TTS:
     def create_completion(cls, text, voice, speed):
         path = cls.mk_path(text, voice, speed)
         if path.exists():
+            print(f"Using cached TTS: {path}")
             return
 
         start = time.time()
         with openai.audio.speech.with_streaming_response.create(
             input=text,
-            model="tts-1-hd",
+            model="tts-1",
             voice=voice,
             response_format="mp3",
             speed=speed,
@@ -156,8 +161,58 @@ class TTS:
 
     def speak(self, text):
         path = self.mk_path(text, self.voice, self.speed)
-        self.create_completion(text, self.voice, self.speed)
-        self.play_delayed(path, 0.3)
+        t1 = self.create_completion(text, self.voice, self.speed)
+        t2 = self.play_delayed(path, 0.3)
+        return [t1, t2]
+
+    @threaded
+    def highlight_spoken(self, layout, paragraph):
+
+        # Wait for the audio to be started
+        while not pygame.mixer.music.get_busy():
+            time.sleep(0.1)
+
+        CHARS_PER_SECOND = 15
+        start = time.time()
+        while pygame.mixer.music.get_busy():
+            time_passed = time.time() - start
+            chars = int(time_passed * CHARS_PER_SECOND)
+
+            # Find the first child that is after the point
+            i = paragraph.start
+            while i < paragraph.end:
+                childs = layout.children[paragraph.start : i + 1]
+                text = "".join(child.text for child in childs)
+                if len(text) >= chars:
+                    break
+                i += 1
+
+            if i == paragraph.end:
+                i -= 1
+
+            for child in layout.children[paragraph.start : i]:
+                child.style -= "reading"
+            layout.children[i].style += "reading"
+
+            time.sleep(0.1)
+
+        for child in layout.children[paragraph.start : paragraph.end]:
+            child.style -= "reading"
+
+        print("DONE HIGHLIGHTING", time.time() - start, paragraph)
+
+    @threaded
+    def read(self, doc: Document, start: int = 0):
+        while start < len(doc.children):
+            paragraph = doc.paragraph_around(start)
+
+            ts = self.speak(paragraph.text)
+            ts.append(self.highlight_spoken(doc, paragraph))
+
+            for t in ts:
+                t.join()
+
+            start = paragraph.end
 
 
 SHOW_LOCALS = bool(os.getenv("SHOW_LOCALS", False))
@@ -250,8 +305,9 @@ def main(
                 elif event.key == pg.K_k:
                     scroll_momentum = +30
                 elif event.key == pg.K_SPACE:
-                    text = layout.paragraph_at(*mouse_doc)
-                    tts.speak(text)
+                    idx, _ = layout.at(*mouse_doc)
+                    # tts.speak(layout.paragraph_around(idx).text)
+                    tts.read(layout, idx)
                 elif event.key == pg.K_MINUS:
                     ...
                 elif event.key == pg.K_PLUS or event.key == pg.K_EQUALS:

@@ -27,6 +27,7 @@ class Style:
     font_obj: DFont
     base_size: int
     color: tuple[int, int, int]
+    background: tuple[int, int, int] | None = None
     font_size: int = 1
 
     classes: set[str] = dataclasses.field(default_factory=set)
@@ -122,7 +123,9 @@ class InlineText:
         debug = pygame.key.get_pressed()[pygame.K_BACKSLASH]
 
         for text, rect in self.text_parts.parts:
-            surf = self.style.font_obj.render(text, self.style.font_size, self.style.color)
+            surf = self.style.font_obj.render(
+                text, self.style.font_size, self.style.color, background=self.style.background
+            )
             screen.blit(surf, (rect.x + scroll_x, rect.y + scroll_y))
 
             if debug:
@@ -145,6 +148,13 @@ class InlineText:
             return True
 
         return False
+
+
+@dataclass
+class Paragraph:
+    text: str
+    start: int
+    end: int
 
 
 class Document:
@@ -179,21 +189,19 @@ class Document:
 
         return i, self.children[i]
 
-    def paragraph_at(self, x, y) -> str:
-        """Return all the text between two hard breaks."""
-        i, child = self.at(x, y)
-
+    def paragraph_around(self, idx: int) -> Paragraph:
         # Find the start of the paragraph
-        start = i + 1
+        start = idx + 1
         while start > 0 and not self.children[start - 1].hard_break:
             start -= 1
 
         # Find the end of the paragraph
-        end = i
+        end = idx
         while end + 1 < len(self.children) and not self.children[end + 1].hard_break:
             end += 1
 
-        return "".join(child.text for child in self.children[start : end + 1])
+        text = "".join(child.text for child in self.children[start : end + 1])
+        return Paragraph(text, start, end + 1)
 
 
 def flatten(node, style: Style) -> Generator[InlineText, None, None]:

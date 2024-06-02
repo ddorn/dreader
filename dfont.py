@@ -85,13 +85,16 @@ class DFont:
         text: str,
         size: int | tuple[int, int] | float,
         color: tuple,
+        background: tuple | None = None,
         align: int = pg.FONT_LEFT,
     ):
         if isinstance(size, float):
             size = int(size)
         if isinstance(color, list):
             color = tuple(color)
-        return self._render(text, size, color, align)
+        if isinstance(background, list):
+            background = tuple(background)
+        return self._render(text, size, color, background=background, align=align)
 
     @lru_cache(1000)
     def _render(
@@ -99,6 +102,8 @@ class DFont:
         text: str,
         size: int | tuple[int, int],
         color: tuple,
+        *,
+        background: tuple | None = None,
         align: int = pg.FONT_LEFT,
     ):
         if not isinstance(size, int):
@@ -110,7 +115,7 @@ class DFont:
 
         surf = pygame.Surface((sizing.width, sizing.height), pygame.SRCALPHA)
         for part, rect in sizing.parts:
-            s = font.render(part, True, color)
+            s = font.render(part, True, color, background)
             blit_aligned(surf, s, rect.y, align)
 
         return surf

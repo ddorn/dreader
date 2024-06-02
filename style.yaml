@@ -13,3 +13,5 @@ hovered:
   color: [200, 200, 255]
 debug:
   color: [255, 0, 255]
+reading:
+  background: [200, 200, 255]
