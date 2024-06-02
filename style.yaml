@@ -3,10 +3,13 @@ h1:
   color: [21, 101, 192]
 h2:
   font_size: 1.5rem
+  color: [21, 101, 192]
 h3:
   font_size: 1.17rem
+  color: [21, 101, 192]
 h4:
   font_size: 1rem
+  color: [21, 101, 192]
 error:
   color: [255, 0, 0]
 hovered:

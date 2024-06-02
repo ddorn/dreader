@@ -6,6 +6,7 @@ from pathlib import Path
 from pprint import pprint
 import re
 from typing import Generator
+import warnings
 
 import pygame
 import marko.block
@@ -25,8 +26,8 @@ RE_SIZE = re.compile(r"([\d.]+)(\w+)")
 @dataclass
 class Style:
     font_obj: DFont
-    base_size: int
-    color: tuple[int, int, int]
+    base_size: int = 30
+    color: tuple[int, int, int] = (0, 0, 0)
     background: tuple[int, int, int] | None = None
     font_size: int = 1
 
@@ -248,6 +249,7 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
         else:
             yield InlineText("", style, hard_break=True)
     else:
+        warnings.warn(f"Unsupported element: {node.__class__.__name__}")
         yield InlineText(
             f"Unsupported element: {node.__class__.__name__}", style.with_class("error")
         )

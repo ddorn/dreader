@@ -452,6 +452,17 @@ qa = ["flake8 (==5.0.4)", "mypy (==0.971)", "types-setuptools (==67.2.0.1)"]
 testing = ["Django", "attrs", "colorama", "docopt", "pytest (<7.0.0)"]
 
 [[package]]
+name = "joblib"
+version = "1.4.2"
+description = "Lightweight pipelining with Python functions"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "joblib-1.4.2-py3-none-any.whl", hash = "sha256:06d478d5674cbc267e7496a410ee875abd68e4340feff4490bcb7afb88060ae6"},
+    {file = "joblib-1.4.2.tar.gz", hash = "sha256:2382c5816b2636fbd20a09e0f4e9dad4736765fdfb7dca582943b9c1366b3f0e"},
+]
+
+[[package]]
 name = "jupyter-client"
 version = "8.6.2"
 description = "Jupyter protocol implementation and client libraries"
@@ -1247,6 +1258,20 @@ slack = ["slack-sdk"]
 telegram = ["requests"]
 
 [[package]]
+name = "tqdm-joblib"
+version = "0.0.4"
+description = "Tracking progress of joblib.Parallel execution"
+optional = false
+python-versions = "*"
+files = [
+    {file = "tqdm_joblib-0.0.4-py3-none-any.whl", hash = "sha256:786f4423f2282701db7959a2b4449d1e3ab60b4841f5a6d03ec49e8cb8946e0b"},
+    {file = "tqdm_joblib-0.0.4.tar.gz", hash = "sha256:8588e0d04aa5d51a0fae3ce68206045a8117ec695daddeaea3012dfd8869d2a5"},
+]
+
+[package.dependencies]
+tqdm = "*"
+
+[[package]]
 name = "traitlets"
 version = "5.14.3"
 description = "Traitlets Python configuration system"
@@ -1323,4 +1348,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "92e76deb4d97ff23b0b805deb8f078d1a71df771632ab50b0ee2987422371f46"
+content-hash = "76c2309c2030bad8ba590371eb48c037d0e217e7e30732bba7b0fa92d68cf557"

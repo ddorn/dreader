@@ -20,6 +20,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # %%
 
+import itertools
+import joblib
 import asyncio
 from functools import wraps
 import hashlib
@@ -34,6 +36,7 @@ from pathlib import Path
 import marko.ast_renderer
 import marko.inline
 import openai
+import tqdm
 import typer
 from typer import Argument, Option
 import random
@@ -77,6 +80,18 @@ def to_filename(name: str, max_len: int = 80) -> str:
     return new.replace("__", "_").strip("_")
 
 
+def split_long_paragraphs(text: str, sep=". ") -> list[str]:
+    if len(text) > 4096:
+        last_dot_before = text[:4096].rfind(sep)
+        if last_dot_before == -1:
+            last_dot_before = 4096
+        else:
+            last_dot_before += len(sep)
+        text, rest = text[:last_dot_before], text[last_dot_before:]
+        return [text] + split_long_paragraphs(rest)
+    return [text]
+
+
 P = ParamSpec("P")
 
 
@@ -102,22 +117,27 @@ class TTS:
         return CACHE / (to_filename(f"{h}_{base}") + ".mp3")
 
     @classmethod
-    @threaded
-    def create_completion(cls, text, voice, speed):
+    async def create_completion(cls, text, voice, speed):
         path = cls.mk_path(text, voice, speed)
         if path.exists():
             print(f"Using cached TTS: {path}")
             return
 
         start = time.time()
-        with openai.audio.speech.with_streaming_response.create(
+        client = openai.AsyncClient()
+        async with client.audio.speech.with_streaming_response.create(
             input=text,
             model="tts-1",
             voice=voice,
             response_format="mp3",
             speed=speed,
         ) as response:
-            response.stream_to_file(path)
+            print(f"Downloading TTS: {path}")
+            try:
+                await response.stream_to_file(path)
+            except Exception as e:
+                path.unlink(missing_ok=True)
+                raise e
         end = time.time()
 
         metadata = dict(
@@ -133,11 +153,14 @@ class TTS:
         with open(CACHE_INFO, "a") as f:
             f.write(json.dumps(metadata) + "\n")
 
-    async def play_delayed(self, path, delay: float):
+    @staticmethod
+    async def play_delayed(path, delay: float):
         for tries in range(30):
             await asyncio.sleep(delay)
             if path.exists():
                 break
+        else:
+            raise FileNotFoundError(f"Cannot play audio: {path}")
 
         # We stream the audio to the file, so it might not be fully written yet.
         # Pygame will wait play only up to what's been generated.
@@ -160,17 +183,23 @@ class TTS:
             pygame.mixer.music.load(path)
             pygame.mixer.music.play(start=time.time() - start)
 
-    async def speak(self, text):
-        path = self.mk_path(text, self.voice, self.speed)
-        self.create_completion(text, self.voice, self.speed)
-        await self.play_delayed(path, 0.3)
+    async def speak(self, text: str):
+
+        parts = split_long_paragraphs(text)
+
+        for part in parts:
+            path = self.mk_path(part, self.voice, self.speed)
+            await asyncio.gather(
+                self.create_completion(part, self.voice, self.speed), self.play_delayed(path, 0.3)
+            )
 
     async def highlight_spoken(self, layout, paragraph):
-        # Wait for the audio to be started
-        while not pygame.mixer.music.get_busy():
+        # Wait for the audio to be started - but no more thn 3 seconds
+        start = time.time()
+        while not pygame.mixer.music.get_busy() and time.time() - start < 3:
             await asyncio.sleep(0.01)
 
-        CHARS_PER_SECOND = 15
+        CHARS_PER_SECOND = 15.5
         start = time.time()
         while pygame.mixer.music.get_busy():
             time_passed = time.time() - start
@@ -235,7 +264,7 @@ app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=SHOW_LOCAL
 
 
 @app.command()
-def main(
+def gui(
     # fmt: off
     markdown: Annotated[Path, Argument(help="Path to the markdown file to read.")] = Path("~/Documents/five.md"),
     font: Annotated[Path, Option(help="Path to the font for all text.")] = FONT,
@@ -356,7 +385,7 @@ def main(
         debug_show(
             screen,
             y_scroll=y_scroll,
-            mouse=pygame.mouse.get_pos(),
+            busy=pygame.mixer.music.get_busy(),
         )
 
         window.flip()
@@ -364,6 +393,37 @@ def main(
 
     tts.stop()
     pygame.quit()
+
+
+@app.command()
+def download_tts(markdown: Path, voice: str = "alloy", speed: float = 1.0):
+    with open(markdown.expanduser()) as f:
+        raw_text = f.read()
+
+    docu = marko.parse(raw_text)
+    layout = Document.from_marko(docu, Style(DFont(FONT)))
+
+    tts = TTS(voice, speed)
+
+    texts = []
+    i = 0
+    while i < len(layout.children):
+        paragraph = layout.paragraph_around(i)
+        texts.extend(split_long_paragraphs(paragraph.text))
+        i = paragraph.end
+
+    async def dl():
+        batchs = itertools.batched(texts, 50)
+        last_time = 0
+        for group in batchs:
+            # Rate limit of 50 per minute
+            if time.time() - last_time < 60:
+                to_wait = 60 - (time.time() - last_time)
+                print(f"Waiting {to_wait:.2f} seconds to avoid rate limit")
+                await asyncio.sleep(to_wait)
+            await asyncio.gather(*(tts.create_completion(text, voice, speed) for text in group))
+
+    asyncio.run(dl())
 
 
 if __name__ == "__main__":
