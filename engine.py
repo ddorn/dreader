@@ -11,6 +11,8 @@ import pygame
 import marko.block
 import marko.inline
 import yaml
+import bisect
+
 
 from dfont import DFont, TextParts
 
@@ -27,19 +29,27 @@ class Style:
     color: tuple[int, int, int]
     font_size: int = 1
 
-    classes: list[str] = dataclasses.field(default_factory=list)
+    classes: set[str] = dataclasses.field(default_factory=set)
 
     def with_class(self, cls: str) -> Style:
         attrs = dict(self.__dict__)
-        attrs["classes"] = self.classes + [cls]
+        attrs["classes"] = self.classes | {cls}
         return Style(**attrs)
+
+    def without_class(self, cls: str) -> Style:
+        attrs = dict(self.__dict__)
+        attrs["classes"] = self.classes - {cls}
+        return Style(**attrs)
+
+    __add__ = with_class
+    __sub__ = without_class
 
     def __getattribute__(self, name: str):
         base = super().__getattribute__(name)
         classes = super().__getattribute__("classes")
 
         for cls in classes:
-            base = CSS.get(cls).get(name, base)
+            base = CSS[cls].get(name, base)
 
         if name in SIZE_ATTRIBUTES:
             if isinstance(base, str):
@@ -116,14 +126,25 @@ class InlineText:
             screen.blit(surf, (rect.x + scroll_x, rect.y + scroll_y))
 
             if debug:
-                pygame.draw.rect(
-                    screen,
-                    (255, 0, 0),
-                    (rect.x + scroll_x, rect.y + scroll_y, rect.width + 1, rect.height),
-                    1,
-                )
-                s = self.style.font_obj(10).render(repr(text), True, (255, 0, 0))
+                r = pygame.Rect(rect.x + scroll_x, rect.y + scroll_y, rect.width, rect.height)
+                pygame.draw.rect(screen, (255, 0, 0), r, 1)
+                pygame.draw.rect(screen, (0, 255, 0), r.inflate(5, 5), 1)
+                s = self.style.font_obj(20).render(repr(text), True, (255, 0, 0))
                 screen.blit(s, (rect.x + scroll_x, rect.y + scroll_y))
+
+    def is_before(self, x, y):
+        """Check is a given point is after the text in the document."""
+
+        # If it's further right & down of the topleft of the first part, it's after
+        first_part = self.text_parts.parts[0][1]
+        if first_part.x < x and first_part.y < y:
+            return True
+
+        # If it's lower than the bottom of the first part, it's after
+        if first_part.bottom < y:
+            return True
+
+        return False
 
 
 class Document:
@@ -149,6 +170,16 @@ class Document:
     @classmethod
     def from_marko(cls, doc, style: Style):
         return cls(list(from_marko(doc, style)))
+
+    def at(self, x, y) -> tuple[int, InlineText]:
+        # Find the first child that is after the point
+        i = 0
+        while i < len(self.children) and self.children[i].is_before(x, y):
+            i += 1
+
+        if i > 0:
+            i -= 1
+        return i, self.children[i]
 
 
 def flatten(node, style: Style) -> Generator[InlineText, None, None]:

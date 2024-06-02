@@ -9,3 +9,7 @@ h4:
   font_size: 1rem
 error:
   color: [255, 0, 0]
+hovered:
+  color: [200, 200, 255]
+debug:
+  color: [255, 0, 255]

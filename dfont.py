@@ -83,7 +83,7 @@ class DFont:
     def render(
         self,
         text: str,
-        size: int | tuple[int, int],
+        size: int | tuple[int, int] | float,
         color: tuple,
         align: int = pg.FONT_LEFT,
     ):
@@ -141,6 +141,9 @@ class DFont:
                 ]
             )
 
+        if lines == [""]:
+            return TextParts([("", pygame.Rect(leading_space, 0, 0, line_height))])
+
         y = 0
         skipped_lines = 0
         parts = []
@@ -179,7 +182,7 @@ class DFont:
                 leading_space = 0
 
         if skipped_lines:
-            parts.append(("", pygame.Rect(0, y, 0, line_height)))
+            parts.append(("", pygame.Rect(leading_space, y, 0, line_height)))
 
         return TextParts(parts)
 

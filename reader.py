@@ -136,13 +136,36 @@ def main(
     for c in layout.children[:10]:
         print(c)
 
+    def debug_show(screen, **kwargs):
+        debug = pygame.key.get_pressed()[pygame.K_BACKSLASH]
+        if not debug:
+            return
+
+        y = 100
+        for key, value in kwargs.items():
+            if isinstance(value, pygame.Rect):
+                pygame.draw.rect(screen, (255, 0, 0), value, 1)
+                s = main_font(20).render(
+                    repr(value), True, (255, 0, 0), bgcolor=(255, 255, 255, 100)
+                )
+                screen.blit(s, (value.x, value.y))
+            else:
+                s = main_font(20).render(
+                    f"{key}: {value}", True, (255, 0, 0), bgcolor=(255, 255, 255, 100)
+                )
+                screen.blit(s, (0, y))
+                y += s.get_height()
+
     # %%
 
     FPS = 60
     y_scroll = 50
     scroll_momentum = 0
 
+    hovered = None
+
     while True:
+        last_y_scroll = y_scroll
         for event in pygame.event.get():
             if event.type == pg.QUIT:
                 sys.exit()
@@ -165,17 +188,31 @@ def main(
 
         y_scroll += scroll_momentum * 60 / FPS
         scroll_momentum *= 0.8
-
         y_scroll = clamp(y_scroll, -layout.size[1] + screen.get_height() - 50, 50)
+        x_scroll = window.size[0] * margin / 2
+
+        mouse = pygame.mouse.get_pos()
+        mouse_doc = mouse[0] - x_scroll, mouse[1] - y_scroll
+        if hovered is not None:
+            hovered.style -= "hovered"
+        i, hovered = layout.at(*mouse_doc)
+        hovered.style += "hovered"
+        print(hovered)
 
         screen.fill(background_color)
 
-        layout.render(window.size[0] * margin / 2, y_scroll, screen)
+        layout.render(x_scroll, y_scroll, screen)
 
         fps = clock.get_fps()
         fps_surf = main_font.render(f"{fps:.2f}", 20, (0, 0, 0))
         screen.fill((255, 255, 255), fps_surf.get_rect())
         screen.blit(fps_surf, (0, 0))
+
+        debug_show(
+            screen,
+            y_scroll=y_scroll,
+            mouse=pygame.mouse.get_pos(),
+        )
 
         window.flip()
         clock.tick(FPS)
