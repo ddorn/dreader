@@ -32,20 +32,10 @@ def blit_aligned(
         raise ValueError(f"Invalid alignment: {align}")
 
 
-def split_keep_trailing_spaces(text: str):
-    """Split a text into parts, so that " ".join(parts) == text if there are no consecutive spaces."""
+def split_keep(text: str) -> list[str]:
+    """Split a text into words and spaces, so that "".join(parts) == text"""
     # Either full spaces or full non-spaces.
-    raw_parts = re.split(r"(\s+|\S+)", text)
-    parts = [part for part in raw_parts if part.strip()]
-    # Re-add spaces at the extremities.
-    if len(raw_parts) >= 2:
-        if not raw_parts[0].strip():
-            parts.insert(0, " ")
-        if not raw_parts[-1].strip():
-            parts.append(" ")
-    elif len(raw_parts) == 1 and not raw_parts[0].strip():
-        parts.append(" ")
-    return parts
+    return re.findall(r"\s+|\S+", text)
 
 
 @dataclass
@@ -120,6 +110,7 @@ class DFont:
         lines = text.splitlines()
         font = self.get_font(size)
         line_height = font.get_height()
+
         if not lines:
             return TextParts([("", pygame.Rect(leading_space, 0, 0, line_height))])
 
@@ -137,36 +128,45 @@ class DFont:
                 ]
             )
 
+        y = 0
+        skipped_lines = 0
         parts = []
-        for line in lines:
+        for input_line in lines:
+            blocks = split_keep(input_line)
 
-            if line.strip() == "":
-                parts.append(
-                    ("", pygame.Rect(leading_space, len(parts) * line_height, 0, line_height))
-                )
+            if not blocks:
                 leading_space = 0
+                skipped_lines += 1
                 continue
+            skipped_lines = 0
 
-            words = line.split()
-            while words:
+            while blocks:
                 visual_line = []
-                while font.size(" ".join(visual_line))[0] < max_width - leading_space:
-                    if not words:
+                # Try adding blocks until the line is too long.
+                for block in blocks:
+                    if font.size("".join(visual_line + [block]))[0] > max_width - leading_space:
                         break
-                    visual_line.append(words.pop(0))
-                else:
-                    words.insert(0, visual_line.pop())
-                visual_line = " ".join(visual_line)
+                    visual_line.append(block)
+
+                blocks = blocks[len(visual_line) :]
+
+                # If next block is a space, ignore it.
+                if blocks and blocks[0].isspace():
+                    blocks.pop(0)
+
+                visual_line = "".join(visual_line)
                 parts.append(
                     (
                         visual_line,
-                        pygame.Rect(
-                            leading_space, len(parts) * line_height, *font.size(visual_line)
-                        ),
+                        pygame.Rect(leading_space, y, *font.size(visual_line)),
                     )
                 )
+                y += line_height
                 # We only need to add leading space after the first line.
                 leading_space = 0
+
+        if skipped_lines:
+            parts.append(("", pygame.Rect(0, y, 0, line_height)))
 
         return TextParts(parts)
 

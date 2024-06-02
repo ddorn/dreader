@@ -71,7 +71,8 @@ def clamp(value, minimum, maximum):
     return value
 
 
-app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
+SHOW_LOCALS = bool(os.getenv("SHOW_LOCALS", False))
+app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=SHOW_LOCALS)
 
 
 @app.command()
@@ -102,6 +103,11 @@ def main(
         raw_text = f.read()
 
     docu = marko.parse(raw_text)
+
+    d = marko.ast_renderer.ASTRenderer().render(docu)
+    with open("out.json", "w") as f:
+        json.dump(d, f, indent=2)
+
     docu
     # %%
     from collections import Counter
@@ -127,10 +133,12 @@ def main(
     margin = 0.1
     layout.layout(window.size[0] * (1 - margin))
 
-    print(layout.children[:10])
+    for c in layout.children[:10]:
+        print(c)
 
     # %%
 
+    FPS = 60
     y_scroll = 50
     scroll_momentum = 0
 
@@ -155,7 +163,7 @@ def main(
                 elif event.button == 5:
                     scroll_momentum -= 10
 
-        y_scroll += scroll_momentum
+        y_scroll += scroll_momentum * 60 / FPS
         scroll_momentum *= 0.8
 
         y_scroll = clamp(y_scroll, -layout.size[1] + screen.get_height() - 50, 50)
@@ -170,7 +178,7 @@ def main(
         screen.blit(fps_surf, (0, 0))
 
         window.flip()
-        clock.tick(60)
+        clock.tick(FPS)
 
 
 if __name__ == "__main__":
