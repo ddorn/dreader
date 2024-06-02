@@ -20,27 +20,22 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # %%
 
-from datetime import datetime
-from dataclasses import dataclass
-import dataclasses
-from functools import lru_cache
+import hashlib
 import json
 import os
-import subprocess
+from pprint import pprint
 import sys
-from time import time
+import threading
+import time
 from typing import Annotated
 from pathlib import Path
-import re
 import marko.ast_renderer
 import marko.inline
+import openai
 import typer
 from typer import Argument, Option
-from enum import Enum
 import random
-import atexit
 import marko
-from pprint import pprint
 
 
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "hide"
@@ -51,11 +46,15 @@ import pygame.locals as pg
 import pygame._sdl2 as sdl2
 
 
-from engine import Document, Style, from_marko
+from engine import Document, Style
 from dfont import DFont
 
-ASSETS = Path(__file__).parent / "assets"
+ROOT = Path(__file__).parent
+ASSETS = ROOT / "assets"
 FONT = ASSETS / "main.ttf"
+CACHE = ROOT / "cache"
+CACHE_INFO = CACHE / "info.jsonl"
+CACHE.mkdir(exist_ok=True)
 
 
 def color_from_name(name: str) -> tuple[int, int, int]:
@@ -69,6 +68,96 @@ def clamp(value, minimum, maximum):
     if value > maximum:
         return maximum
     return value
+
+
+def to_filename(name: str, max_len: int = 50) -> str:
+    new = "".join(c if c.isalnum() else "_" for c in name[:max_len])
+    return new.replace("__", "_").strip("_")
+
+
+def threaded(func):
+    def wrapper(*args, **kwargs):
+        thread = threading.Thread(target=func, args=args, kwargs=kwargs)
+        thread.start()
+        return thread
+
+    return wrapper
+
+
+class TTS:
+    def __init__(self, voice="alloy", speed: float = 1.0):
+        self.voice = voice
+        self.speed = speed
+
+    @staticmethod
+    def mk_path(text, voice, speed):
+        base = f"{voice}_{speed}_{text}"
+        h = hashlib.md5(base.encode()).hexdigest()
+        return CACHE / (to_filename(f"{h}_{base}") + ".mp3")
+
+    @classmethod
+    @threaded
+    def create_completion(cls, text, voice, speed):
+        path = cls.mk_path(text, voice, speed)
+        if path.exists():
+            return
+
+        start = time.time()
+        with openai.audio.speech.with_streaming_response.create(
+            input=text,
+            model="tts-1-hd",
+            voice=voice,
+            response_format="mp3",
+            speed=speed,
+        ) as response:
+            response.stream_to_file(path)
+        end = time.time()
+
+        metadata = dict(
+            path=path.name,
+            text=text,
+            voice=voice,
+            speed=speed,
+            time_to_generate=end - start,
+            timestamp=time.time(),
+        )
+        pprint(metadata)
+
+        with open(CACHE_INFO, "a") as f:
+            f.write(json.dumps(metadata) + "\n")
+
+    @threaded
+    def play_delayed(self, path, delay: float):
+        for tries in range(30):
+            time.sleep(delay)
+            if path.exists():
+                break
+
+        # We stream the audio to the file, so it might not be fully written yet.
+        # Pygame will wait play only up to what's been generated.
+        # So once pygame is done playing, we restart the audio from the end of what was played.
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.play()
+
+        start = time.time()
+        while True:
+            part_start = time.time()
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.01)
+
+            print(f"PLAY {time.time() - start:.3f} part: {time.time() - part_start:.3f}")
+            # Just above the 10ms sleep - it did not have much to play -> probably the end
+            if time.time() - part_start < 0.011:
+                print("PLAY DONE")
+                break
+
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.play(start=time.time() - start)
+
+    def speak(self, text):
+        path = self.mk_path(text, self.voice, self.speed)
+        self.create_completion(text, self.voice, self.speed)
+        self.play_delayed(path, 0.3)
 
 
 SHOW_LOCALS = bool(os.getenv("SHOW_LOCALS", False))
@@ -98,6 +187,8 @@ def main(
     main_font = DFont(font)
     font_size = 30
 
+    tts = TTS()
+
     # %%
     with open(markdown.expanduser()) as f:
         raw_text = f.read()
@@ -107,25 +198,6 @@ def main(
     d = marko.ast_renderer.ASTRenderer().render(docu)
     with open("out.json", "w") as f:
         json.dump(d, f, indent=2)
-
-    docu
-    # %%
-    from collections import Counter
-
-    counts = Counter()
-
-    def count_types(node, parent=""):
-        counts[parent + type(node).__name__] += 1
-        try:
-            children = node.children
-        except AttributeError:
-            pass
-        else:
-            for child in children:
-                count_types(child, parent + type(node).__name__ + ".")
-
-    count_types(docu)
-    pprint(counts)
 
     # %% Create the layout
     style = Style(main_font, base_size=font_size, color=text_color)
@@ -161,6 +233,7 @@ def main(
     FPS = 60
     y_scroll = 50
     scroll_momentum = 0
+    mouse_doc = (0, 0)
 
     hovered = None
 
@@ -176,6 +249,9 @@ def main(
                     scroll_momentum = -30
                 elif event.key == pg.K_k:
                     scroll_momentum = +30
+                elif event.key == pg.K_SPACE:
+                    text = layout.paragraph_at(*mouse_doc)
+                    tts.speak(text)
                 elif event.key == pg.K_MINUS:
                     ...
                 elif event.key == pg.K_PLUS or event.key == pg.K_EQUALS:
@@ -197,7 +273,6 @@ def main(
             hovered.style -= "hovered"
         i, hovered = layout.at(*mouse_doc)
         hovered.style += "hovered"
-        print(hovered)
 
         screen.fill(background_color)
 

@@ -174,12 +174,26 @@ class Document:
     def at(self, x, y) -> tuple[int, InlineText]:
         # Find the first child that is after the point
         i = 0
-        while i < len(self.children) and self.children[i].is_before(x, y):
+        while i + 1 < len(self.children) and self.children[i + 1].is_before(x, y):
             i += 1
 
-        if i > 0:
-            i -= 1
         return i, self.children[i]
+
+    def paragraph_at(self, x, y) -> str:
+        """Return all the text between two hard breaks."""
+        i, child = self.at(x, y)
+
+        # Find the start of the paragraph
+        start = i + 1
+        while start > 0 and not self.children[start - 1].hard_break:
+            start -= 1
+
+        # Find the end of the paragraph
+        end = i
+        while end + 1 < len(self.children) and not self.children[end + 1].hard_break:
+            end += 1
+
+        return "".join(child.text for child in self.children[start : end + 1])
 
 
 def flatten(node, style: Style) -> Generator[InlineText, None, None]:
