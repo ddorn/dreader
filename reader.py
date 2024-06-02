@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # %%
 
+import asyncio
 from functools import wraps
 import hashlib
 import json
@@ -92,6 +93,7 @@ class TTS:
     def __init__(self, voice="alloy", speed: float = 1.0):
         self.voice = voice
         self.speed = speed
+        self.current_loop = None
 
     @staticmethod
     def mk_path(text, voice, speed):
@@ -131,10 +133,9 @@ class TTS:
         with open(CACHE_INFO, "a") as f:
             f.write(json.dumps(metadata) + "\n")
 
-    @threaded
-    def play_delayed(self, path, delay: float):
+    async def play_delayed(self, path, delay: float):
         for tries in range(30):
-            time.sleep(delay)
+            await asyncio.sleep(delay)
             if path.exists():
                 break
 
@@ -148,7 +149,7 @@ class TTS:
         while True:
             part_start = time.time()
             while pygame.mixer.music.get_busy():
-                time.sleep(0.01)
+                await asyncio.sleep(0.01)
 
             print(f"PLAY {time.time() - start:.3f} part: {time.time() - part_start:.3f}")
             # Just above the 10ms sleep - it did not have much to play -> probably the end
@@ -159,18 +160,15 @@ class TTS:
             pygame.mixer.music.load(path)
             pygame.mixer.music.play(start=time.time() - start)
 
-    def speak(self, text):
+    async def speak(self, text):
         path = self.mk_path(text, self.voice, self.speed)
-        t1 = self.create_completion(text, self.voice, self.speed)
-        t2 = self.play_delayed(path, 0.3)
-        return [t1, t2]
+        self.create_completion(text, self.voice, self.speed)
+        await self.play_delayed(path, 0.3)
 
-    @threaded
-    def highlight_spoken(self, layout, paragraph):
-
+    async def highlight_spoken(self, layout, paragraph):
         # Wait for the audio to be started
         while not pygame.mixer.music.get_busy():
-            time.sleep(0.1)
+            await asyncio.sleep(0.01)
 
         CHARS_PER_SECOND = 15
         start = time.time()
@@ -194,25 +192,42 @@ class TTS:
                 child.style -= "reading"
             layout.children[i].style += "reading"
 
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
         for child in layout.children[paragraph.start : paragraph.end]:
             child.style -= "reading"
 
         print("DONE HIGHLIGHTING", time.time() - start, paragraph)
 
-    @threaded
-    def read(self, doc: Document, start: int = 0):
+    async def read_async(self, doc: Document, start: int = 0):
         while start < len(doc.children):
             paragraph = doc.paragraph_around(start)
 
-            ts = self.speak(paragraph.text)
-            ts.append(self.highlight_spoken(doc, paragraph))
-
-            for t in ts:
-                t.join()
+            await asyncio.gather(
+                self.speak(paragraph.text),
+                self.highlight_spoken(doc, paragraph),
+            )
 
             start = paragraph.end
+
+    @threaded
+    def read(self, doc: Document, start: int = 0):
+        if self.current_loop is not None:
+            self.stop()
+
+        self.current_loop = asyncio.new_event_loop()
+        try:
+            self.current_loop.run_until_complete(self.read_async(doc, start))
+        except RuntimeError:
+            pass
+
+    def stop(self):
+        if self.current_loop is not None:
+            self.current_loop.stop()
+            while self.current_loop.is_running():
+                time.sleep(0.01)
+            self.current_loop.close()
+            self.current_loop = None
 
 
 SHOW_LOCALS = bool(os.getenv("SHOW_LOCALS", False))
@@ -260,9 +275,6 @@ def main(
     margin = 0.1
     layout.layout(window.size[0] * (1 - margin))
 
-    for c in layout.children[:10]:
-        print(c)
-
     def debug_show(screen, **kwargs):
         debug = pygame.key.get_pressed()[pygame.K_BACKSLASH]
         if not debug:
@@ -292,11 +304,12 @@ def main(
 
     hovered = None
 
-    while True:
+    running = True
+    while running:
         last_y_scroll = y_scroll
         for event in pygame.event.get():
             if event.type == pg.QUIT:
-                sys.exit()
+                running = False
             elif event.type == pg.WINDOWRESIZED:
                 layout.layout(window.size[0] * (1 - margin))
             elif event.type == pg.KEYDOWN:
@@ -306,8 +319,9 @@ def main(
                     scroll_momentum = +30
                 elif event.key == pg.K_SPACE:
                     idx, _ = layout.at(*mouse_doc)
-                    # tts.speak(layout.paragraph_around(idx).text)
                     tts.read(layout, idx)
+                elif event.key == pg.K_s:
+                    tts.stop()
                 elif event.key == pg.K_MINUS:
                     ...
                 elif event.key == pg.K_PLUS or event.key == pg.K_EQUALS:
@@ -347,6 +361,9 @@ def main(
 
         window.flip()
         clock.tick(FPS)
+
+    tts.stop()
+    pygame.quit()
 
 
 if __name__ == "__main__":

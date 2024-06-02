@@ -150,6 +150,11 @@ class InlineText:
         return False
 
 
+class NewLine(InlineText):
+    def __init__(self, style: Style):
+        super().__init__("", style, hard_break=True)
+
+
 @dataclass
 class Paragraph:
     text: str
@@ -213,13 +218,15 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
     elif isinstance(node, marko.block.Paragraph):
         for child in node.children:
             yield from flatten(child, style)
+        yield NewLine(style)
     elif isinstance(node, marko.block.BlankLine):
-        yield InlineText("\n", style, hard_break=True)
+        yield InlineText("\n\n", style, hard_break=True)
     elif isinstance(node, marko.block.Heading):
         style = style.with_class(f"h{node.level}")
+        yield NewLine(style)
         for child in node.children:
             yield from flatten(child, style)
-        yield InlineText("", style, hard_break=True)
+        yield NewLine(style)
     elif isinstance(node, marko.block.List):
         for i, child in enumerate(node.children, start=node.start):
             if node.ordered:
@@ -228,10 +235,11 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
                 prefix = node.bullet + " "
             yield InlineText(prefix, style)
             yield from flatten(child, style)
+            yield NewLine(style)
     elif isinstance(node, marko.block.ListItem):
         for child in node.children:
             yield from flatten(child, style)
-        yield InlineText("", style, hard_break=True)
+        yield NewLine(style)
     elif isinstance(node, marko.inline.RawText):
         yield InlineText(node.children, style)
     elif isinstance(node, marko.inline.LineBreak):
