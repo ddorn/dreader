@@ -1,34 +1,66 @@
 from __future__ import annotations
 
-from abc import abstractmethod, ABC
 from dataclasses import dataclass
-from typing import Generator, Self
-import warnings
+import dataclasses
+from pathlib import Path
+from pprint import pprint
+import re
+from typing import Generator
 
 import pygame
 import marko.block
 import marko.inline
+import yaml
 
 from dfont import DFont, TextParts
+
+
+CSS = yaml.safe_load(Path("style.yaml").read_text())
+SIZE_ATTRIBUTES = {"font_size"}
+RE_SIZE = re.compile(r"([\d.]+)(\w+)")
 
 
 @dataclass
 class Style:
     font_obj: DFont
-    font_size: int
+    base_size: int
     color: tuple[int, int, int]
-    header_multipliers: tuple[float, float, float, float, float, float] = (
-        2.0,
-        1.5,
-        1.17,
-        1.12,
-        1.0,
-        1.0,
-    )
+    font_size: int = 1
 
-    def clone(self, **kwargs):
-        kwargs = {**self.__dict__, **kwargs}
-        return Style(**kwargs)
+    classes: list[str] = dataclasses.field(default_factory=list)
+
+    def with_class(self, cls: str) -> Style:
+        attrs = dict(self.__dict__)
+        attrs["classes"] = self.classes + [cls]
+        return Style(**attrs)
+
+    def __getattribute__(self, name: str):
+        base = super().__getattribute__(name)
+        classes = super().__getattribute__("classes")
+
+        for cls in classes:
+            base = CSS.get(cls).get(name, base)
+
+        if name in SIZE_ATTRIBUTES:
+            if isinstance(base, str):
+                match = RE_SIZE.match(base)
+                if match:
+                    size, unit = match.groups()
+                    base = float(size) * super().__getattribute__("base_size")
+                    if unit == "%":
+                        base = base // 100
+                    elif unit == "rem":
+                        pass
+                    else:
+                        raise ValueError(f"Unknown unit: {unit}")
+                else:
+                    raise ValueError(f"Invalid size: {base}")
+            elif isinstance(base, (int, float)):
+                base = base * super().__getattribute__("base_size")
+            else:
+                raise TypeError(f"Invalid type for {name}: {type(base)}")
+            base = int(base)
+        return base
 
 
 class InlineText:
@@ -131,9 +163,7 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
     elif isinstance(node, marko.block.BlankLine):
         yield InlineText("\n", style, hard_break=True)
     elif isinstance(node, marko.block.Heading):
-        style = style.clone(
-            font_size=int(style.font_size * style.header_multipliers[node.level - 1])
-        )
+        style = style.with_class(f"h{node.level}")
         for child in node.children:
             yield from flatten(child, style)
         yield InlineText("", style, hard_break=True)
@@ -141,12 +171,12 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
         yield InlineText(node.children, style)
     elif isinstance(node, marko.inline.LineBreak):
         if node.soft:
-            yield InlineText(" ", style.clone(color=(0, 0, 250)))
+            yield InlineText(" ", style)
         else:
             yield InlineText("", style, hard_break=True)
     else:
         yield InlineText(
-            f"Unsupported element: {node.__class__.__name__}", style.clone(color=(255, 0, 0))
+            f"Unsupported element: {node.__class__.__name__}", style.with_class("error")
         )
 
 

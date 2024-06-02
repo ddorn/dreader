@@ -80,8 +80,21 @@ class DFont:
 
     __call__ = get_font
 
-    @lru_cache(1000)
     def render(
+        self,
+        text: str,
+        size: int | tuple[int, int],
+        color: tuple,
+        align: int = pg.FONT_LEFT,
+    ):
+        if isinstance(size, float):
+            size = int(size)
+        if isinstance(color, list):
+            color = tuple(color)
+        return self._render(text, size, color, align)
+
+    @lru_cache(1000)
+    def _render(
         self,
         text: str,
         size: int | tuple[int, int],

@@ -128,7 +128,7 @@ def main(
     pprint(counts)
 
     # %% Create the layout
-    style = Style(main_font, font_size, text_color)
+    style = Style(main_font, base_size=font_size, color=text_color)
     layout = Document.from_marko(docu, style)
     margin = 0.1
     layout.layout(window.size[0] * (1 - margin))

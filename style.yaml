@@ -1,0 +1,11 @@
+h1:
+  font_size: 2rem
+  color: [21, 101, 192]
+h2:
+  font_size: 1.5rem
+h3:
+  font_size: 1.17rem
+h4:
+  font_size: 1rem
+error:
+  color: [255, 0, 0]
