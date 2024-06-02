@@ -21,6 +21,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # %%
 
 import itertools
+import subprocess
 import joblib
 import asyncio
 from functools import wraps
@@ -81,6 +82,10 @@ def to_filename(name: str, max_len: int = 80) -> str:
 
 
 def split_long_paragraphs(text: str, sep=". ") -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+
     if len(text) > 4096:
         last_dot_before = text[:4096].rfind(sep)
         if last_dot_before == -1:
@@ -88,7 +93,7 @@ def split_long_paragraphs(text: str, sep=". ") -> list[str]:
         else:
             last_dot_before += len(sep)
         text, rest = text[:last_dot_before], text[last_dot_before:]
-        return [text] + split_long_paragraphs(rest)
+        return [text.strip()] + split_long_paragraphs(rest)
     return [text]
 
 
@@ -121,10 +126,11 @@ class TTS:
         path = cls.mk_path(text, voice, speed)
         if path.exists():
             print(f"Using cached TTS: {path}")
-            return
+            return path
 
         start = time.time()
         client = openai.AsyncClient()
+        print(f"Downloading TTS: {path}")
         async with client.audio.speech.with_streaming_response.create(
             input=text,
             model="tts-1",
@@ -132,7 +138,6 @@ class TTS:
             response_format="mp3",
             speed=speed,
         ) as response:
-            print(f"Downloading TTS: {path}")
             try:
                 await response.stream_to_file(path)
             except Exception as e:
@@ -152,6 +157,8 @@ class TTS:
 
         with open(CACHE_INFO, "a") as f:
             f.write(json.dumps(metadata) + "\n")
+
+        return path
 
     @staticmethod
     async def play_delayed(path, delay: float):
@@ -399,7 +406,7 @@ def gui(
 
 
 @app.command()
-def download_tts(markdown: Path, voice: str = "alloy", speed: float = 1.0):
+def download_tts(markdown: Path, voice: str = "alloy", speed: float = 1.0, make_mp3: bool = False):
     with open(markdown.expanduser()) as f:
         raw_text = f.read()
 
@@ -415,8 +422,16 @@ def download_tts(markdown: Path, voice: str = "alloy", speed: float = 1.0):
         texts.extend(split_long_paragraphs(paragraph.text))
         i = paragraph.end
 
+    ordered_files = []
+    to_do = []
+    for text in texts:
+        path = TTS.mk_path(text, voice, speed)
+        if not path.exists():
+            to_do.append(text)
+        ordered_files.append(path)
+
     async def dl():
-        batchs = itertools.batched(texts, 50)
+        batchs = list(itertools.batched(to_do, 50))
         last_time = 0
         for group in batchs:
             # Rate limit of 50 per minute
@@ -427,6 +442,12 @@ def download_tts(markdown: Path, voice: str = "alloy", speed: float = 1.0):
             await asyncio.gather(*(tts.create_completion(text, voice, speed) for text in group))
 
     asyncio.run(dl())
+
+    if make_mp3:
+        out = markdown.with_suffix(".mp3")
+        cmd = f"ffmpeg -i 'concat:{'|'.join(str(f) for f in ordered_files)}' -c copy {out}"
+        subprocess.check_call(cmd, shell=True)
+        print(f"Prepared storyteller audio: {out}")
 
 
 if __name__ == "__main__":
