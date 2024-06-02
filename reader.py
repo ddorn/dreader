@@ -294,15 +294,13 @@ def gui(
 
     docu = marko.parse(raw_text)
 
-    d = marko.ast_renderer.ASTRenderer().render(docu)
-    with open("out.json", "w") as f:
-        json.dump(d, f, indent=2)
+    # d = marko.ast_renderer.ASTRenderer().render(docu)
+    # with open("out.json", "w") as f:
+    #     json.dump(d, f, indent=2)
 
     # %% Create the layout
     style = Style(main_font, base_size=font_size, color=text_color)
     layout = Document.from_marko(docu, style)
-    margin = 0.1
-    layout.layout(window.size[0] * (1 - margin))
 
     def debug_show(screen, **kwargs):
         debug = pygame.key.get_pressed()[pygame.K_BACKSLASH]
@@ -325,6 +323,10 @@ def gui(
                 y += s.get_height()
 
     # %%
+    margin = 0.1
+    layout.layout(window.size[0] * (1 - margin))
+    max_doc_width = 900
+    doc_width = min(max_doc_width, window.size[0] * (1 - margin))
 
     FPS = 60
     y_scroll = 50
@@ -340,7 +342,8 @@ def gui(
             if event.type == pg.QUIT:
                 running = False
             elif event.type == pg.WINDOWRESIZED:
-                layout.layout(window.size[0] * (1 - margin))
+                doc_width = min(max_doc_width, window.size[0] * (1 - margin))
+                layout.layout(doc_width)
             elif event.type == pg.KEYDOWN:
                 if event.key == pg.K_j:
                     scroll_momentum = -30
@@ -364,7 +367,7 @@ def gui(
         y_scroll += scroll_momentum * 60 / FPS
         scroll_momentum *= 0.8
         y_scroll = clamp(y_scroll, -layout.size[1] + screen.get_height() - 50, 50)
-        x_scroll = window.size[0] * margin / 2
+        x_scroll = (window.size[0] - doc_width) / 2
 
         mouse = pygame.mouse.get_pos()
         mouse_doc = mouse[0] - x_scroll, mouse[1] - y_scroll
