@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from pprint import pprint
 import re
 import pygame
 import pygame.locals as pg
@@ -29,6 +32,45 @@ def blit_aligned(
         raise ValueError(f"Invalid alignment: {align}")
 
 
+def split_keep_trailing_spaces(text: str):
+    """Split a text into parts, so that " ".join(parts) == text if there are no consecutive spaces."""
+    # Either full spaces or full non-spaces.
+    raw_parts = re.split(r"(\s+|\S+)", text)
+    parts = [part for part in raw_parts if part.strip()]
+    # Re-add spaces at the extremities.
+    if len(raw_parts) >= 2:
+        if not raw_parts[0].strip():
+            parts.insert(0, " ")
+        if not raw_parts[-1].strip():
+            parts.append(" ")
+    elif len(raw_parts) == 1 and not raw_parts[0].strip():
+        parts.append(" ")
+    return parts
+
+
+@dataclass
+class TextParts:
+    parts: list[tuple[str, pygame.Rect]]
+
+    def __post_init__(self):
+        assert self.parts
+
+    @property
+    def width(self):
+        return max(part[1].right for part in self.parts)
+
+    @property
+    def height(self):
+        return sum(part[1].height for part in self.parts)
+
+    @property
+    def continuation_pos(self):
+        return self.parts[-1][1].topright
+
+    def shift(self, dx: int, dy: int):
+        return self.__class__([(text, rect.move(dx, dy)) for text, rect in self.parts])
+
+
 class DFont:
     def __init__(self, path: Path):
         self.path = path
@@ -50,84 +92,79 @@ class DFont:
         text: str,
         size: int | tuple[int, int],
         color: tuple,
-        monospaced_time: bool = False,
         align: int = pg.FONT_LEFT,
     ):
         if not isinstance(size, int):
-            if monospaced_time:
-                # Use the font size that fits a text equivalent to the time.
-                # We use 0s to make sure the text is as wide as possible and doesn't jitter.
-                size = self.auto_size(re.sub(r"\d", "0", text), size)
-            else:
-                size = self.auto_size(text, size)
+            size = self.auto_size(text, size)
 
         font = self.get_font(size, align)
 
-        sizing = self.tight_size_with_newlines(text, size)
+        sizing = self.size(text, size)
 
-        if not monospaced_time:
-            surf = font.render(text, True, color)
-            surf = surf.subsurface(
-                (0, -sizing.y_offset, surf.get_width(), min(sizing.height, surf.get_height()))
-            )
-            return surf
+        surf = pygame.Surface((sizing.width, sizing.height), pygame.SRCALPHA)
+        for part, rect in sizing.parts:
+            s = font.render(part, True, color)
+            blit_aligned(surf, s, rect.y, align)
 
-        else:
-            digits = "0123456789"
-            # We render each char independently to make sure they are monospaced.
-            chars = [font.render(c, True, color) for c in text]
-            # Make each digit the size of a 0.
-            width = font.size("0")[0]
-            full_width = sum(
-                s.get_width() if c not in digits else width for c, s in zip(text, chars)
-            )
+        return surf
 
-            # Create a surface with the correct width.
-            surf = pygame.Surface((full_width, sizing.height), pg.SRCALPHA)
-            # Blit each char at the correct position.
-            x = 0
-            for c, s in zip(text, chars):
-                if c in digits:
-                    blit_x = x + (width - s.get_width()) // 2
-                else:
-                    blit_x = x
+    def size(
+        self, text: str, size: int, max_width: int | None = None, leading_space: int = 0
+    ) -> TextParts:
+        """Return the size of the (optionally wrapped) text, including with newlines."""
 
-                surf.blit(s, (blit_x, sizing.y_offset))
-                x += s.get_width() if c not in digits else width
-
-            # If \ is pressed, show the metrics of the text.
-            if pygame.key.get_pressed()[pg.K_BACKSLASH]:
-                pygame.draw.rect(surf, (0, 255, 0), (0, 0, surf.get_width(), surf.get_height()), 1)
-
-            return surf
-
-    @dataclass
-    class TextSize:
-        width: int
-        height: int
-        y_offset: int
-
-    def tight_size_with_newlines(self, text: str, size: int) -> TextSize:
-        """Return the size of the text with newlines and if single line, without the extra space around it."""
         lines = text.splitlines()
         font = self.get_font(size)
         line_height = font.get_height()
         if not lines:
-            return self.TextSize(0, line_height, 0)
-        elif len(lines) == 1:
-            # If there is only one line, we can use the metrics to get the visible height,
-            # with much less space around the text. This is especially relevant for Bevan.
-            metrics = [m for m in font.metrics(text) if m is not None]
-            min_y = min(m[2] for m in metrics)
-            max_y = max(m[3] for m in metrics)
-            line_height = max_y - min_y
-            return self.TextSize(font.size(text)[0], line_height, -font.get_ascent() + max_y)
-        else:
-            return self.TextSize(
-                max(font.size(line)[0] for line in lines),
-                line_height * text.count("\n") + line_height,
-                0,
+            return TextParts([("", pygame.Rect(leading_space, 0, 0, line_height))])
+
+        if max_width is None:
+            sizes = [font.size(line) for line in lines]
+            return TextParts(
+                [
+                    (
+                        line,
+                        pygame.Rect(
+                            0 if i > 0 else leading_space, i * line_height, size[0], line_height
+                        ),
+                    )
+                    for i, (line, size) in enumerate(zip(lines, sizes))
+                ]
             )
+
+        parts = []
+        for line in lines:
+
+            if line.strip() == "":
+                parts.append(
+                    ("", pygame.Rect(leading_space, len(parts) * line_height, 0, line_height))
+                )
+                leading_space = 0
+                continue
+
+            words = line.split()
+            while words:
+                visual_line = []
+                while font.size(" ".join(visual_line))[0] < max_width - leading_space:
+                    if not words:
+                        break
+                    visual_line.append(words.pop(0))
+                else:
+                    words.insert(0, visual_line.pop())
+                visual_line = " ".join(visual_line)
+                parts.append(
+                    (
+                        visual_line,
+                        pygame.Rect(
+                            leading_space, len(parts) * line_height, *font.size(visual_line)
+                        ),
+                    )
+                )
+                # We only need to add leading space after the first line.
+                leading_space = 0
+
+        return TextParts(parts)
 
     def auto_size(self, text: str, max_rect: tuple[int, int]):
         """Find the largest font size that will fit text in max_rect."""
@@ -137,7 +174,7 @@ class DFont:
         max_size = max_rect[1]
         while min_size < max_size:
             font_size = (min_size + max_size) // 2
-            text_size = self.tight_size_with_newlines(text, font_size)
+            text_size = self.size(text, font_size)
 
             if text_size.width <= max_rect[0] and text_size.height <= max_rect[1]:
                 min_size = font_size + 1

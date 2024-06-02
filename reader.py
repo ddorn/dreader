@@ -51,7 +51,7 @@ import pygame.locals as pg
 import pygame._sdl2 as sdl2
 
 
-from engine import Document, Style
+from engine import Document, Style, from_marko
 from dfont import DFont
 
 ASSETS = Path(__file__).parent / "assets"
@@ -77,7 +77,7 @@ app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 @app.command()
 def main(
     # fmt: off
-    markdown: Annotated[Path, Argument(help="Path to the markdown file to read.")] = Path("five.md"),
+    markdown: Annotated[Path, Argument(help="Path to the markdown file to read.")] = Path("~/Documents/five.md"),
     font: Annotated[Path, Option(help="Path to the font for all text.")] = FONT,
     background_color: tuple[int, int, int] = (245, 245, 245),
     text_color: tuple[int, int, int] = (30, 20, 10),
@@ -98,8 +98,7 @@ def main(
     font_size = 30
 
     # %%
-    markdown = Path("five.md")
-    with open(markdown) as f:
+    with open(markdown.expanduser()) as f:
         raw_text = f.read()
 
     docu = marko.parse(raw_text)
@@ -125,16 +124,20 @@ def main(
     # %% Create the layout
     style = Style(main_font, font_size, text_color)
     layout = Document.from_marko(docu, style)
-    layout.layout()
+    layout.layout(window.size[0] * 0.9)
+
+    print(layout.children[:10])
 
     # %%
 
-    y_offset = -50
+    y_offset = 50
 
     while True:
         for event in pygame.event.get():
             if event.type == pg.QUIT:
                 sys.exit()
+            elif event.type == pg.WINDOWRESIZED:
+                layout.layout(window.size[0] * 0.9)
             elif event.type == pg.KEYDOWN:
                 if event.key == pg.K_j:
                     y_offset -= 30

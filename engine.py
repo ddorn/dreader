@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
-from typing import Self
+from typing import Generator, Self
 import warnings
 
 import pygame
 import marko.block
 import marko.inline
 
-from dfont import DFont
+from dfont import DFont, TextParts
 
 
 @dataclass
@@ -35,126 +35,92 @@ class Style:
         return self.font_obj(self.font_size)
 
 
-class Element[T: Element](ABC):
-    def __init__(self, children: list[T], style: Style):
-        self.size = (0, 0)
-        self.children = children
-        self.style = style
-
-    def layout(self):
-        for child in self.children:
-            child.layout()
-        self._layout()
-
-    @abstractmethod
-    def _layout(self):
-        raise NotImplementedError
-
-    def render(self, x, y, screen):
-        rect = pygame.Rect(x, y, *self.size)
-        if not rect.colliderect(screen.get_rect()):
-            return
-
-        self._render(x, y, screen)
-
-    @abstractmethod
-    def _render(self, x, y, screen):
-        raise NotImplementedError
-
-
-class InlineText(Element):
+class InlineText:
     def __init__(self, text: str, style: Style):
         self.text = text
-        super().__init__([], style)
+        self.size = (0, 0)  # in layout()
+        self.text_parts: TextParts = None  # in layout()  # type: ignore
+        self.continuation_pos = (0, 0)  # in layout()
+        self.style = style
 
-    def _layout(self):
-        self.size = self.style.font.size(self.text)
-
-    def _render(self, x, y, screen):
-        surf = self.style.font.render(self.text, True, (0, 0, 0))
-        screen.blit(surf, (x, y))
-
-    @classmethod
-    def from_marko(cls, node: marko.inline.InlineElement, style: Style) -> InlineText:
-        if isinstance(node, marko.inline.RawText):
-            return InlineText(node.children, style)
-        elif isinstance(node, marko.inline.LineBreak):
-            if node.soft:
-                return InlineText(" ", style)
-            else:
-                return InlineText("\n", style)
-        else:
-            warnings.warn(f"Unsupported inline element: {node.__class__.__name__}")
-            return InlineText(
-                f"Unsupported element: {node.__class__.__name__}",
-                style.clone(color=(255, 0, 0)),
-            )
-
-
-class Paragraph(Element[InlineText]):
-    def _layout(self):
-        self.size = sum(child.size[0] for child in self.children), max(
-            child.size[1] for child in self.children
+    def __repr__(self):
+        short_text = self.text[:20] + "..." if len(self.text) > 23 else self.text
+        return (
+            f"<InlineText({short_text!r}, size={self.size}, "
+            f"{self.text_parts},"
+            f"continuation_pos={self.continuation_pos})>"
         )
 
-    def _render(self, x, y, screen):
+    def layout(self, width: float, type_head: tuple[int, int]):
+        metrics = self.style.font_obj.size(
+            self.text, self.style.font_size, int(width), type_head[0]
+        )
+        metrics = metrics.shift(0, type_head[1])
+        self.text_parts = metrics
+        self.size = metrics.width, metrics.height
+        self.continuation_pos = metrics.continuation_pos
+        self.rect = pygame.Rect(0, type_head[1], *self.size)
+
+    def render(self, scroll_x: int, scroll_y: int, screen):
+        rect_on_screen = self.rect.move(scroll_x, scroll_y)
+        if not rect_on_screen.colliderect(screen.get_rect()):
+            return
+
+        for text, rect in self.text_parts.parts:
+            surf = self.style.font.render(text, True, self.style.color)
+            screen.blit(surf, (rect.x + scroll_x, rect.y + scroll_y))
+
+
+class Document:
+
+    def __init__(self, children: list[InlineText]) -> None:
+        self.size = (0, 0)
+        self.children = children
+
+    def layout(self, width: float):
+        write_head = (0, 0)
         for child in self.children:
-            child.render(x, y, screen)
-            x += child.size[0]
+            child.layout(width, write_head)
+            write_head = child.continuation_pos
 
-    @classmethod
-    def from_marko(cls, para: marko.block.BlockElement, style: Style) -> Paragraph:
-
-        if isinstance(para, marko.block.Heading):
-            style = style.clone(
-                font_size=style.font_size * style.header_multipliers[para.level - 1]
-            )
-
-        children = []
-        for child in para.children:
-            if isinstance(child, marko.inline.InlineElement):
-                children.append(InlineText.from_marko(child, style))
-            else:
-                warnings.warn(f"Unsupported element in Paragraph: {child.__class__.__name__}")
-                children.append(
-                    InlineText(
-                        f"Unsupported element: {child.__class__.__name__}",
-                        style.clone(color=(255, 0, 0)),
-                    )
-                )
-        return Paragraph(children, style)
-
-
-class Document(Element[Paragraph]):
-    def _layout(self):
         self.size = max(child.size[0] for child in self.children), sum(
             child.size[1] for child in self.children
         )
 
-    def _render(self, x, y, screen):
+    def render(self, x, y, screen):
         for child in self.children:
             child.render(x, y, screen)
-            y += child.size[1]
 
     @classmethod
-    def from_marko(cls, doc: marko.block.Document, style: Style) -> Document:
-        first_level = []
-        for child in doc.children:
-            if isinstance(child, (marko.block.Paragraph, marko.block.Heading)):
-                first_level.append(Paragraph.from_marko(child, style))
-            elif isinstance(child, marko.block.BlankLine):
-                pass
-            else:
-                warnings.warn(f"Unsupported element in Document: {child.__class__.__name__}")
-                first_level.append(
-                    Paragraph(
-                        [
-                            InlineText(
-                                f"Unsupported element: {child.__class__.__name__}",
-                                style.clone(color=(255, 0, 0)),
-                            )
-                        ],
-                        style,
-                    )
-                )
-        return Document(first_level, style)
+    def from_marko(cls, doc, style: Style):
+        return cls(list(from_marko(doc, style)))
+
+
+def from_marko(node, style: Style) -> Generator[InlineText, None, None]:
+    """Flatten a document tree into a list of InlineText objects."""
+
+    if isinstance(node, marko.block.Document):
+        for child in node.children:
+            yield from from_marko(child, style)
+    elif isinstance(node, marko.block.Paragraph):
+        for child in node.children:
+            yield from from_marko(child, style)
+            yield InlineText("\n", style)
+    elif isinstance(node, marko.block.BlankLine):
+        yield InlineText("\n", style)
+    elif isinstance(node, marko.block.Heading):
+        style = style.clone(font_size=style.font_size * style.header_multipliers[node.level - 1])
+        for child in node.children:
+            yield from from_marko(child, style)
+            yield InlineText("\n", style)
+    elif isinstance(node, marko.inline.RawText):
+        yield InlineText(node.children, style)
+    elif isinstance(node, marko.inline.LineBreak):
+        if node.soft:
+            yield InlineText(" ", style)
+        else:
+            yield InlineText("\n", style)
+    else:
+        yield InlineText(
+            f"Unsupported element: {node.__class__.__name__}", style.clone(color=(255, 0, 0))
+        )
