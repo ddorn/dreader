@@ -31,6 +31,7 @@ class Style:
     color: tuple[int, int, int] = (0, 0, 0)
     background: tuple[int, int, int] | None = None
     font_size: int = 1
+    underline: tuple[int, int, int] | None = None
 
     classes: list[str] = dataclasses.field(default_factory=list)
 
@@ -138,7 +139,11 @@ class InlineText:
 
         for text, rect in self.text_parts.parts:
             surf = self.style.font_obj.render(
-                text, self.style.font_size, self.style.color, background=self.style.background
+                text,
+                self.style.font_size,
+                self.style.color,
+                background=self.style.background,
+                underline=self.style.underline,
             )
             screen.blit(surf, (rect.x + scroll_x, rect.y + scroll_y))
 
@@ -193,8 +198,8 @@ class Document:
             child.layout(width, write_head)
             write_head = child.continuation_pos
 
-        self.size = max(child.size[0] for child in self.children), sum(
-            child.size[1] for child in self.children
+        self.size = max(child.rect.right for child in self.children), max(
+            child.rect.bottom for child in self.children
         )
 
     def render(self, x, y, screen):

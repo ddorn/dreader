@@ -371,6 +371,11 @@ def gui(
                     tts.read(layout, idx)
                 elif event.key == pg.K_s:
                     tts.stop()
+                elif event.key == pg.K_g:
+                    if event.mod & pg.KMOD_SHIFT:
+                        y_scroll = float("inf")
+                    else:
+                        y_scroll = float("-inf")
                 elif event.key == pg.K_MINUS:
                     ...
                 elif event.key == pg.K_PLUS or event.key == pg.K_EQUALS:

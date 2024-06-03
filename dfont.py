@@ -70,13 +70,16 @@ class DFont:
         self.path = path
         self.by_size: dict[tuple, pygame.Font] = {}
 
-    def get_font(self, size: int | float, align: int = pg.FONT_LEFT) -> pygame.Font:
-        size = int(size)
-        key = size, align
-        if key not in self.by_size:
-            self.by_size[key] = pygame.Font(self.path, size)
-            self.by_size[key].align = align
-        return self.by_size[key]
+    @staticmethod
+    @lru_cache(300)
+    def _get_font(path: Path, size: int, align: int, underline: bool) -> pygame.Font:
+        font = pygame.Font(path, size)
+        font.align = align
+        font.underline = underline
+        return font
+
+    def get_font(self, size: int | float, align: int = pg.FONT_LEFT, underline: bool = False):
+        return DFont._get_font(self.path, int(size), align, underline)
 
     __call__ = get_font
 
@@ -87,6 +90,7 @@ class DFont:
         color: tuple,
         background: tuple | None = None,
         align: int = pg.FONT_LEFT,
+        underline: tuple | None = None,
     ):
         if isinstance(size, float):
             size = int(size)
@@ -94,7 +98,11 @@ class DFont:
             color = tuple(color)
         if isinstance(background, list):
             background = tuple(background)
-        return self._render(text, size, color, background=background, align=align)
+        if isinstance(underline, list):
+            underline = tuple(underline)
+        return self._render(
+            text, size, color, background=background, align=align, underline=underline
+        )
 
     @lru_cache(1000)
     def _render(
@@ -103,8 +111,9 @@ class DFont:
         size: int | tuple[int, int],
         color: tuple,
         *,
-        background: tuple | None = None,
-        align: int = pg.FONT_LEFT,
+        background: tuple | None,
+        align: int,
+        underline: tuple[int, int, int] | None,
     ):
         if not isinstance(size, int):
             size = self.auto_size(text, size)
@@ -116,6 +125,9 @@ class DFont:
         surf = pygame.Surface((sizing.width, sizing.height), pygame.SRCALPHA)
         for part, rect in sizing.parts:
             s = font.render(part, True, color, background)
+            if underline:
+                baseline = font.get_ascent() + 2
+                pygame.draw.line(s, underline, (0, baseline), (s.get_width(), baseline), 1)
             blit_aligned(surf, s, rect.y, align)
 
         return surf

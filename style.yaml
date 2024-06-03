@@ -19,4 +19,4 @@ debug:
 reading:
   background: [200, 200, 255]
 link:
-  color: [255, 165, 0]
+  underline: [21, 101, 192]
