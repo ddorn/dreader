@@ -87,12 +87,14 @@ class InlineText:
         hard_break: bool = False,
         link_to: str | None = None,
         anchor: str | None = None,
+        indent: int = 0,
     ):
         self.text = text
         self.style = style
         self.hard_break = hard_break
         self.link_to = link_to
         self.anchor = anchor
+        self.indent = indent
 
         # Set by layout()
         self.size = (0, 0)
@@ -100,16 +102,19 @@ class InlineText:
         self.continuation_pos = (0, 0)
 
     def __repr__(self):
-        short_text = self.text[:20] + "..." if len(self.text) > 23 else self.text
-        show = dict(
-            text=repr(short_text),
-            size=self.size,
-            parts=self.text_parts,
-            cont=self.continuation_pos,
-            hard_break=self.hard_break,
-        )
-        as_str = ", ".join(f"{k}={v}" for k, v in show.items())
-        return f"<InlineText {as_str}>"
+        attrs = dict(self.__dict__)
+        attrs["text"] = self.text[:20] + "..." if len(self.text) > 23 else self.text
+        del attrs["style"]
+        attrs["classes"] = self.style.classes
+
+        s = ""
+        for key, value in attrs.items():
+            if value is True:
+                s += f", {key}"
+            elif value:
+                s += f", {key}={value!r}"
+
+        return f"<InlineText {s[2:]}>"
 
     def layout(self, width: float, type_head: tuple[int, int]):
         metrics = self.style.font_obj.size(
@@ -144,6 +149,10 @@ class InlineText:
                 s = self.style.font_obj(20).render(repr(text), True, (255, 0, 0))
                 screen.blit(s, (rect.x + scroll_x, rect.y + scroll_y))
 
+    @property
+    def indent_px(self):
+        return self.style.font_size * self.indent
+
     def is_before(self, x, y):
         """Check is a given point is after the text in the document."""
 
@@ -160,8 +169,8 @@ class InlineText:
 
 
 class NewLine(InlineText):
-    def __init__(self, style: Style):
-        super().__init__("", style, hard_break=True)
+    def __init__(self, style: Style, **kwargs):
+        super().__init__("", style, hard_break=True, **kwargs)
 
 
 @dataclass
@@ -180,6 +189,7 @@ class Document:
     def layout(self, width: float):
         write_head = (0, 0)
         for child in self.children:
+            width -= child.indent_px
             child.layout(width, write_head)
             write_head = child.continuation_pos
 
@@ -189,6 +199,7 @@ class Document:
 
     def render(self, x, y, screen):
         for child in self.children:
+            x += child.indent_px
             child.render(x, y, screen)
 
     @classmethod
@@ -250,13 +261,12 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
                 prefix = f"{i}. "
             else:
                 prefix = node.bullet + " "
-            yield InlineText(prefix, style)
+            yield InlineText(prefix, style, indent=1)
             yield from flatten(child, style)
-            yield NewLine(style)
+            yield NewLine(style, indent=-1)
     elif isinstance(node, marko.block.ListItem):
         for child in node.children:
             yield from flatten(child, style)
-        yield NewLine(style)
     elif isinstance(node, marko.inline.RawText):
         yield InlineText(node.children, style)
     elif isinstance(node, marko.inline.LineBreak):
@@ -290,12 +300,14 @@ def from_marko(doc, style: Style) -> Generator[InlineText, None, None]:
 
     show_branches(doc)
 
-    last_was_hard_break = False
+    last = InlineText("dummy", style)
     for child in flatten(doc, style):
-        if last_was_hard_break and child.hard_break and not child.text.strip():
+        if not last.text and not child.text:
+            last.hard_break |= child.hard_break
+            last.indent += child.indent
             continue
-        last_was_hard_break = child.hard_break
         yield child
+        last = child
 
 
 def show_branches(doc):

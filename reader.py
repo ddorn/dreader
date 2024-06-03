@@ -316,6 +316,9 @@ def gui(
     style = Style(main_font, base_size=font_size, color=text_color)
     layout = Document.from_marko(docu, style)
 
+    for n in layout.children[:20]:
+        print(n)
+
     def debug_show(screen, **kwargs):
         debug = pygame.key.get_pressed()[pygame.K_BACKSLASH]
         if not debug:
