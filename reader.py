@@ -22,6 +22,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import itertools
 import subprocess
+import warnings
 import joblib
 import asyncio
 from functools import wraps
@@ -52,7 +53,7 @@ import pygame.locals as pg
 import pygame._sdl2 as sdl2
 
 
-from engine import Document, Style
+from engine import Document, Style, InlineText
 from dfont import DFont
 
 ROOT = Path(__file__).parent
@@ -114,6 +115,7 @@ class TTS:
         self.voice = voice
         self.speed = speed
         self.current_loop = None
+        self.currently_read: InlineText | None = None
 
     @staticmethod
     def mk_path(text, voice, speed):
@@ -163,9 +165,9 @@ class TTS:
     @staticmethod
     async def play_delayed(path, delay: float):
         for tries in range(30):
-            await asyncio.sleep(delay)
             if path.exists():
                 break
+            await asyncio.sleep(delay)
         else:
             raise FileNotFoundError(f"Cannot play audio: {path}")
 
@@ -224,16 +226,19 @@ class TTS:
             if i == paragraph.end:
                 i -= 1
 
-            for child in layout.children[paragraph.start : i]:
-                child.style -= "reading"
-            layout.children[i].style += "reading"
+            self.set_read(layout.children[i])
 
             await asyncio.sleep(0.1)
 
-        for child in layout.children[paragraph.start : paragraph.end]:
-            child.style -= "reading"
-
+        self.set_read(None)
         print("DONE HIGHLIGHTING", time.time() - start, paragraph)
+
+    def set_read(self, node: InlineText | None):
+        if self.currently_read is not None:
+            self.currently_read.style -= "reading"
+        if node is not None:
+            node.style += "reading"
+        self.currently_read = node
 
     async def read_async(self, doc: Document, start: int = 0):
         while start < len(doc.children):
@@ -264,6 +269,8 @@ class TTS:
                 time.sleep(0.01)
             self.current_loop.close()
             self.current_loop = None
+            self.set_read(None)
+            pygame.mixer.music.stop()
 
 
 SHOW_LOCALS = bool(os.getenv("SHOW_LOCALS", False))
@@ -301,9 +308,9 @@ def gui(
 
     docu = marko.parse(raw_text)
 
-    # d = marko.ast_renderer.ASTRenderer().render(docu)
-    # with open("out.json", "w") as f:
-    #     json.dump(d, f, indent=2)
+    d = marko.ast_renderer.ASTRenderer().render(docu)
+    with open("out.json", "w") as f:
+        json.dump(d, f, indent=2)
 
     # %% Create the layout
     style = Style(main_font, base_size=font_size, color=text_color)
@@ -344,7 +351,7 @@ def gui(
 
     running = True
     while running:
-        last_y_scroll = y_scroll
+
         for event in pygame.event.get():
             if event.type == pg.QUIT:
                 running = False
@@ -366,7 +373,21 @@ def gui(
                 elif event.key == pg.K_PLUS or event.key == pg.K_EQUALS:
                     ...
             elif event.type == pg.MOUSEBUTTONDOWN:
-                if event.button == 4:
+                if event.button == 1:
+                    idx, node = layout.at(*mouse_doc)
+                    if node.link_to:
+                        if node.link_to.startswith("#"):
+                            if (target_idx := layout.get(node.link_to[1:])) is not None:
+                                # scroll to target
+                                y_scroll = -layout.children[target_idx].rect.y + 50
+                            else:
+                                warnings.warn(f"Could not find target: {node.link_to}")
+                        else:
+                            os.system(f"xdg-open {node.link_to}")
+                    else:
+                        tts.read(layout, idx)
+
+                elif event.button == 4:
                     scroll_momentum += 10
                 elif event.button == 5:
                     scroll_momentum -= 10

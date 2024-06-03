@@ -5,9 +5,10 @@ import dataclasses
 from pathlib import Path
 from pprint import pprint
 import re
-from typing import Generator
+from typing import Counter, Generator
 import warnings
 
+import marko.ast_renderer
 import pygame
 import marko.block
 import marko.inline
@@ -31,16 +32,19 @@ class Style:
     background: tuple[int, int, int] | None = None
     font_size: int = 1
 
-    classes: set[str] = dataclasses.field(default_factory=set)
+    classes: list[str] = dataclasses.field(default_factory=list)
 
     def with_class(self, cls: str) -> Style:
         attrs = dict(self.__dict__)
-        attrs["classes"] = self.classes | {cls}
+        if cls not in self.classes:
+            attrs["classes"] = self.classes + [cls]
+        else:
+            attrs["classes"] = list(self.classes)
         return Style(**attrs)
 
     def without_class(self, cls: str) -> Style:
         attrs = dict(self.__dict__)
-        attrs["classes"] = self.classes - {cls}
+        attrs["classes"] = [c for c in self.classes if c != cls]
         return Style(**attrs)
 
     __add__ = with_class
@@ -81,10 +85,14 @@ class InlineText:
         text: str,
         style: Style,
         hard_break: bool = False,
+        link_to: str | None = None,
+        anchor: str | None = None,
     ):
         self.text = text
         self.style = style
         self.hard_break = hard_break
+        self.link_to = link_to
+        self.anchor = anchor
 
         # Set by layout()
         self.size = (0, 0)
@@ -209,6 +217,12 @@ class Document:
         text = "".join(child.text for child in self.children[start : end + 1])
         return Paragraph(text, start, end + 1)
 
+    def get(self, anchor: str) -> int | None:
+        for i, child in enumerate(self.children):
+            if child.anchor == anchor:
+                return i
+        return None
+
 
 def flatten(node, style: Style) -> Generator[InlineText, None, None]:
     """Flatten a document tree into a list of InlineText objects."""
@@ -224,9 +238,11 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
         yield InlineText("\n\n", style, hard_break=True)
     elif isinstance(node, marko.block.Heading):
         style = style.with_class(f"h{node.level}")
-        yield NewLine(style)
-        for child in node.children:
-            yield from flatten(child, style)
+        new = [n for child in node.children for n in flatten(child, style)]
+        title = "".join(n.text for n in new)
+        kebab = re.sub(r"\W+", "-", title.lower().strip())
+        yield InlineText("", style, anchor=kebab)
+        yield from new
         yield NewLine(style)
     elif isinstance(node, marko.block.List):
         for i, child in enumerate(node.children, start=node.start):
@@ -248,16 +264,31 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
             yield InlineText(" ", style)
         else:
             yield InlineText("", style, hard_break=True)
+    elif isinstance(node, marko.inline.Literal):
+        assert isinstance(node.children, str)  # It should!
+        yield InlineText(node.children, style)
+    elif isinstance(node, marko.inline.Link):
+        for child in node.children:
+            for new in flatten(child, style + "link"):
+                if not new.link_to:
+                    new.link_to = node.dest
+                yield new
     else:
         warnings.warn(f"Unsupported element: {node.__class__.__name__}")
-        yield InlineText(
-            f"Unsupported element: {node.__class__.__name__}", style.with_class("error")
-        )
+        yield InlineText(f"<{node.__class__.__name__}> ", style + "error", hard_break=True)
+        if hasattr(node, "children") and isinstance(node.children, list):
+            for child in node.children:
+                yield from flatten(child, style + "error")
+        else:
+            yield InlineText(repr(node), style + "error")
+        yield NewLine(style)
 
 
 def from_marko(doc, style: Style) -> Generator[InlineText, None, None]:
     # The main goal here is to filter redundant newlines.
     # We want to keep only one newline in a row.
+
+    show_branches(doc)
 
     last_was_hard_break = False
     for child in flatten(doc, style):
@@ -265,3 +296,17 @@ def from_marko(doc, style: Style) -> Generator[InlineText, None, None]:
             continue
         last_was_hard_break = child.hard_break
         yield child
+
+
+def show_branches(doc):
+    counter = Counter()
+
+    def recurse(node, path: str):
+        path += node.__class__.__name__
+        counter[path] += 1
+        if isinstance(node.children, list):
+            for child in node.children:
+                recurse(child, path + ".")
+
+    recurse(doc, "")
+    pprint(counter)
