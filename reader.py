@@ -208,7 +208,7 @@ class TTS:
         while not pygame.mixer.music.get_busy() and time.time() - start < 3:
             await asyncio.sleep(0.01)
 
-        CHARS_PER_SECOND = 15.5
+        CHARS_PER_SECOND = 16.5
         start = time.time()
         while pygame.mixer.music.get_busy():
             time_passed = time.time() - start
@@ -351,6 +351,7 @@ def gui(
     mouse_doc = (0, 0)
 
     hovered = None
+    follow_read = False
 
     running = True
     while running:
@@ -373,9 +374,11 @@ def gui(
                     tts.stop()
                 elif event.key == pg.K_g:
                     if event.mod & pg.KMOD_SHIFT:
-                        y_scroll = float("inf")
-                    else:
                         y_scroll = float("-inf")
+                    else:
+                        y_scroll = float("+inf")
+                elif event.key == pg.K_f:
+                    follow_read = not follow_read
                 elif event.key == pg.K_MINUS:
                     ...
                 elif event.key == pg.K_PLUS or event.key == pg.K_EQUALS:
@@ -404,6 +407,10 @@ def gui(
         scroll_momentum *= 0.8
         y_scroll = clamp(y_scroll, -layout.size[1] + screen.get_height() - 50, 50)
         x_scroll = (window.size[0] - doc_width) / 2
+
+        if follow_read and tts.currently_read is not None:
+            # Make it center of the screen (y)
+            y_scroll = -tts.currently_read.rect.centery + screen.get_height() // 2
 
         mouse = pygame.mouse.get_pos()
         mouse_doc = mouse[0] - x_scroll, mouse[1] - y_scroll
