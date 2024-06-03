@@ -117,18 +117,22 @@ class InlineText:
 
         return f"<InlineText {s[2:]}>"
 
-    def layout(self, width: float, type_head: tuple[int, int]):
+    def layout(self, indent: float, width: float, type_head: tuple[int, int]):
         metrics = self.style.font_obj.size(
             self.text, self.style.font_size, int(width), type_head[0]
         )
         metrics = metrics.shift(0, type_head[1])
+        # Move each part by indent, if it is at the start of the line
+        for part in metrics.parts:
+            if part[1].x == 0:
+                part[1].x += indent
         self.text_parts = metrics
         self.size = metrics.width, metrics.height
         if self.hard_break:
             self.continuation_pos = (0, metrics.bottom)
         else:
             self.continuation_pos = metrics.continuation_pos
-        self.rect = pygame.Rect(0, type_head[1], *self.size)
+        self.rect = pygame.Rect(indent, type_head[1], *self.size)
 
     def render(self, scroll_x: int, scroll_y: int, screen):
         rect_on_screen = self.rect.move(scroll_x, scroll_y)
@@ -193,9 +197,10 @@ class Document:
 
     def layout(self, width: float):
         write_head = (0, 0)
+        indent = 0
         for child in self.children:
-            width -= child.indent_px
-            child.layout(width, write_head)
+            indent += child.indent_px
+            child.layout(indent, width - indent, write_head)
             write_head = child.continuation_pos
 
         self.size = max(child.rect.right for child in self.children), max(
@@ -204,7 +209,6 @@ class Document:
 
     def render(self, x, y, screen):
         for child in self.children:
-            x += child.indent_px
             child.render(x, y, screen)
 
     @classmethod

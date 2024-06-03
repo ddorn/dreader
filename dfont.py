@@ -61,7 +61,7 @@ class TextParts:
     def continuation_pos(self):
         return self.parts[-1][1].topright
 
-    def shift(self, dx: int, dy: int):
+    def shift(self, dx: float, dy: float):
         return self.__class__([(text, rect.move(dx, dy)) for text, rect in self.parts])
 
 
