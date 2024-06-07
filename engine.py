@@ -1,83 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import dataclasses
+import json
+import re
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from pprint import pprint
-import re
 from typing import Counter, Generator
-import warnings
 
 import marko.ast_renderer
-import pygame
 import marko.block
 import marko.inline
+import pygame
 import yaml
-import bisect
 
-
-from dfont import DFont, TextParts
-
+from dfont import TextParts, wrap, render
+from style import Style, ComputedStyle, FontStyle
 
 CSS = yaml.safe_load(Path("style.yaml").read_text())
 SIZE_ATTRIBUTES = {"font_size"}
 RE_SIZE = re.compile(r"([\d.]+)(\w+)")
-
-
-@dataclass
-class Style:
-    font_obj: DFont
-    base_size: int = 30
-    color: tuple[int, int, int] = (0, 0, 0)
-    background: tuple[int, int, int] | None = None
-    font_size: int = 1
-    underline: tuple[int, int, int] | None = None
-
-    classes: list[str] = dataclasses.field(default_factory=list)
-
-    def with_class(self, cls: str) -> Style:
-        attrs = dict(self.__dict__)
-        if cls not in self.classes:
-            attrs["classes"] = self.classes + [cls]
-        else:
-            attrs["classes"] = list(self.classes)
-        return Style(**attrs)
-
-    def without_class(self, cls: str) -> Style:
-        attrs = dict(self.__dict__)
-        attrs["classes"] = [c for c in self.classes if c != cls]
-        return Style(**attrs)
-
-    __add__ = with_class
-    __sub__ = without_class
-
-    def __getattribute__(self, name: str):
-        base = super().__getattribute__(name)
-        classes = super().__getattribute__("classes")
-
-        for cls in classes:
-            base = CSS[cls].get(name, base)
-
-        if name in SIZE_ATTRIBUTES:
-            if isinstance(base, str):
-                match = RE_SIZE.match(base)
-                if match:
-                    size, unit = match.groups()
-                    base = float(size) * super().__getattribute__("base_size")
-                    if unit == "%":
-                        base = base // 100
-                    elif unit == "rem":
-                        pass
-                    else:
-                        raise ValueError(f"Unknown unit: {unit}")
-                else:
-                    raise ValueError(f"Invalid size: {base}")
-            elif isinstance(base, (int, float)):
-                base = base * super().__getattribute__("base_size")
-            else:
-                raise TypeError(f"Invalid type for {name}: {type(base)}")
-            base = int(base)
-        return base
 
 
 class InlineText:
@@ -92,6 +35,7 @@ class InlineText:
     ):
         self.text = text
         self.style = style
+        self.computed_style: ComputedStyle | None = None
         self.hard_break = hard_break
         self.link_to = link_to
         self.anchor = anchor
@@ -101,6 +45,7 @@ class InlineText:
         self.size = (0, 0)
         self.text_parts: TextParts = None  # type: ignore
         self.continuation_pos = (0, 0)
+        self.last_total_indent = 0
 
     def __repr__(self):
         attrs = dict(self.__dict__)
@@ -117,11 +62,25 @@ class InlineText:
 
         return f"<InlineText {s[2:]}>"
 
-    def layout(self, indent: float, width: float, type_head: tuple[int, int]):
-        metrics = self.style.font_obj.size(
-            self.text, self.style.font_size, int(width), type_head[0]
-        )
-        metrics = metrics.shift(0, type_head[1])
+    def compute_style(self, base_size: int) -> ComputedStyle:
+        if self.computed_style is None:
+            self.computed_style = self.style.compute(base_size)
+        return self.computed_style
+
+    def add_class(self, cls: str):
+        self.style += cls
+        self.computed_style = None
+
+    def remove_class(self, cls: str):
+        self.style -= cls
+        self.computed_style = None
+
+    def layout(self, indent: float, width: float, type_head: tuple[int, int], base_size: int):
+        style = self.compute_style(base_size)
+
+        metrics = wrap(self.text, style.font.get_font(), int(width), type_head[0])
+        metrics = metrics.shift(0, dy=type_head[1])
+
         # Move each part by indent, if it is at the start of the line
         for part in metrics.parts:
             if part[1].x == 0:
@@ -133,34 +92,29 @@ class InlineText:
         else:
             self.continuation_pos = metrics.continuation_pos
         self.rect = pygame.Rect(indent, type_head[1], *self.size)
+        self.last_total_indent = indent
 
     def render(self, scroll_x: int, scroll_y: int, screen):
         rect_on_screen = self.rect.move(scroll_x, scroll_y)
         if not rect_on_screen.colliderect(screen.get_rect()):
             return
 
-        debug = pygame.key.get_pressed()[pygame.K_BACKSLASH]
+        if self.computed_style is None:
+            print(self)
+        assert self.computed_style is not None, "layout() must be called before render()"
+
+        # debug = pygame.key.get_pressed()[pygame.K_BACKSLASH]
 
         for text, rect in self.text_parts.parts:
-            surf = self.style.font_obj.render(
-                text,
-                self.style.font_size,
-                self.style.color,
-                background=self.style.background,
-                underline=self.style.underline,
-            )
+            surf = render(text, self.computed_style.font)
             screen.blit(surf, (rect.x + scroll_x, rect.y + scroll_y))
 
-            if debug:
-                r = pygame.Rect(rect.x + scroll_x, rect.y + scroll_y, rect.width, rect.height)
-                pygame.draw.rect(screen, (255, 0, 0), r, 1)
-                pygame.draw.rect(screen, (0, 255, 0), r.inflate(5, 5), 1)
-                s = self.style.font_obj(20).render(repr(text), True, (255, 0, 0))
-                screen.blit(s, (rect.x + scroll_x, rect.y + scroll_y))
-
-    @property
-    def indent_px(self):
-        return self.style.font_size * self.indent
+            # if debug:
+            #     r = pygame.Rect(rect.x + scroll_x, rect.y + scroll_y, rect.width, rect.height)
+            #     pygame.draw.rect(screen, (255, 0, 0), r, 1)
+            #     pygame.draw.rect(screen, (0, 255, 0), r.inflate(5, 5), 1)
+            #     s = self.style.font_obj(20).render(repr(text), True, (255, 0, 0))
+            #     screen.blit(s, (rect.x + scroll_x, rect.y + scroll_y))
 
     def is_before(self, x, y):
         """Check is a given point is after the text in the document."""
@@ -195,24 +149,78 @@ class Document:
         self.size = (0, 0)
         self.children = children
 
-    def layout(self, width: float):
+    def layout(self, width: float, base_size: int):
+        """Place and size all the elements in the document. Must be called before render()"""
+
         write_head = (0, 0)
         indent = 0
         for child in self.children:
-            indent += child.indent_px
-            child.layout(indent, width - indent, write_head)
+            style = child.compute_style(base_size)
+            indent += style.indent_size
+            child.layout(indent, width - indent, write_head, base_size)
             write_head = child.continuation_pos
 
         self.size = max(child.rect.right for child in self.children), max(
             child.rect.bottom for child in self.children
         )
 
+    def update_layout(
+        self, width: float, base_size: int, scroll_x: float, scroll_y: float, screen_height: int
+    ):
+        """Update the layout of the visible elements.
+
+        Accomodates changes to local changes such as font size, but not global
+        ones such as indent (which can have arbitrary far-reaching effects).
+        """
+
+        # Find the first element that is curently visible
+        i, node = self.at(-scroll_x, -scroll_y - 100)
+        # Find first hard break before that
+        while i > 0 and not self.children[i].hard_break:
+            i -= 1
+
+        # While we're not at the end of the screen, layout the elements
+        if i == 0:
+            write_head = (0, 0)
+            indent = 0
+        else:
+            write_head = self.children[i - 1].continuation_pos
+            indent = self.children[i - 1].last_total_indent
+
+        while write_head[1] < -scroll_y + screen_height:
+            if i >= len(self.children):
+                break
+
+            style = self.children[i].compute_style(base_size)
+            indent += style.indent_size
+            self.children[i].layout(indent, width - indent, write_head, base_size)
+            write_head = self.children[i].continuation_pos
+
+            i += 1
+
     def render(self, x, y, screen):
-        for child in self.children:
-            child.render(x, y, screen)
+        for i, child in enumerate(self.children):
+            try:
+                child.render(x, y, screen)
+            except AssertionError:
+                print(f"Error rendering {i}: {child}")
+                raise
 
     @classmethod
-    def from_marko(cls, doc, style: Style):
+    def read(cls, path: Path, style: Style = Style([])):
+        with open(path.expanduser()) as f:
+            raw_text = f.read()
+
+        docu = marko.parse(raw_text)
+
+        d = marko.ast_renderer.ASTRenderer().render(docu)
+        with open("out.json", "w") as f:
+            json.dump(d, f, indent=2)
+
+        return cls(list(from_marko(docu, style)))
+
+    @classmethod
+    def from_marko(cls, doc, style: Style = Style([])):
         return cls(list(from_marko(doc, style)))
 
     def at(self, x, y) -> tuple[int, InlineText]:
@@ -257,7 +265,7 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
     elif isinstance(node, marko.block.BlankLine):
         yield InlineText("\n\n", style, hard_break=True)
     elif isinstance(node, marko.block.Heading):
-        style = style.with_class(f"h{node.level}")
+        style = style + "h" + f"h{node.level}"
         new = [n for child in node.children for n in flatten(child, style)]
         title = "".join(n.text for n in new)
         kebab = re.sub(r"\W+", "-", title.lower().strip())
@@ -270,9 +278,9 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
                 prefix = f"{i}. "
             else:
                 prefix = node.bullet + " "
-            yield InlineText(prefix, style, indent=1)
+            yield InlineText(prefix, style + "item")
             yield from flatten(child, style)
-            yield NewLine(style, indent=-1)
+            yield NewLine(style + "item-end")
     elif isinstance(node, marko.block.ListItem):
         for child in node.children:
             yield from flatten(child, style)
@@ -283,6 +291,12 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
             yield InlineText(" ", style)
         else:
             yield InlineText("", style, hard_break=True)
+    elif isinstance(node, marko.inline.Emphasis):
+        for child in node.children:
+            yield from flatten(child, style + "italic")
+    elif isinstance(node, marko.inline.StrongEmphasis):
+        for child in node.children:
+            yield from flatten(child, style + "bold")
     elif isinstance(node, marko.inline.Literal):
         assert isinstance(node.children, str)  # It should!
         yield InlineText(node.children, style)
@@ -303,14 +317,16 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
         yield NewLine(style)
 
 
-def from_marko(doc, style: Style) -> Generator[InlineText, None, None]:
+def from_marko(doc, style: Style = Style([])) -> Generator[InlineText, None, None]:
     # The main goal here is to filter redundant newlines.
     # We want to keep only one newline in a row.
 
     show_branches(doc)
 
-    last = InlineText("dummy", style)
-    for child in flatten(doc, style):
+    stream = flatten(doc, style)
+    last = next(stream)
+    for child in stream:
+        # We try to merge them into one
         if not last.text and not child.text:
             last.hard_break |= child.hard_break
             last.indent += child.indent

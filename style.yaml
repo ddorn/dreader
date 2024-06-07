@@ -1,29 +1,59 @@
-h1:
-  font_size: 2rem
-  color: [21, 101, 192]
-h2:
-  font_size: 1.5rem
-  color: [21, 101, 192]
-h3:
-  font_size: 1.17rem
-  color: [21, 101, 192]
-h4:
-  font_size: 1rem
-  color: [21, 101, 192]
-h5:
-  font_size: 0.83rem
-  color: [21, 101, 192]
-h6:
-  font_size: 0.67rem
-  color: [21, 101, 192]
+default:
+  font:
+    file: Open Sans
+    size: 30
+    color: [0, 0, 0]
+    background: null
+    bold: false
+    italic: false
+    underline: null
+  indent_size: 0
 
+h1:
+  font:
+    size: 2rem
+h2:
+  font:
+    size: 1.5rem
+h3:
+  font:
+    size: 1.17rem
+h4:
+  font:
+    size: 1rem
+h5:
+  font:
+    size: 0.83rem
+h6:
+  font:
+    size: 0.67rem
+h:
+  font:
+    color: [21, 101, 192]
+    file: Bevan
+bold:
+  font:
+    # bold: true
+    file: Bevan
+italic:
+  font:
+    italic: true
 error:
-  color: [255, 0, 0]
+  font:
+    color: [255, 0, 0]
 hovered:
-  color: [120, 130, 155]
+  font:
+    color: [120, 130, 155]
 debug:
-  color: [255, 0, 255]
+  font:
+    color: [255, 0, 255]
 reading:
-  background: [200, 200, 255]
+  font:
+    background: [200, 200, 255]
 link:
-  underline: [21, 101, 192]
+  font:
+    underline: [21, 101, 192]
+item:
+  indent_size: 1rem
+item-end:
+  indent_size: -1rem
