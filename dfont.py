@@ -187,6 +187,35 @@ class DFont:
                 if blocks and blocks[0].isspace():
                     blocks.pop(0)
 
+                # If we have a block that is too long, we need to split it.
+                if blocks and not visual_line:
+                    to_split = blocks.pop(0)
+                    print(f"Splitting {to_split!r}")
+                    # Try to split on letters/vs non-letters.
+                    sub_words = re.findall(r"\w+|\W+", to_split)
+                    if len(sub_words) > 1:
+                        blocks = sub_words + blocks
+                        continue
+                    else:
+                        # Find the longest split that fits.
+                        if to_split.isalnum():
+                            suffix = "-"
+                        else:
+                            suffix = ""
+
+                        for i in range(len(to_split)):
+                            if font.size(to_split[:i] + suffix)[0] > max_width - leading_space:
+                                break
+
+                        if i > 0:
+                            visual_line.append(to_split[: i - 1] + suffix)
+                            blocks.insert(0, to_split[i - 1 :])
+                        else:
+                            # Abort, we can't split this block. Maybe too much indend.
+                            # Give up and overflow.
+                            print(f"Failed to split {to_split!r}")
+                            visual_line.append(to_split)
+
                 visual_line = "".join(visual_line)
                 parts.append(
                     (

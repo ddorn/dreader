@@ -291,7 +291,9 @@ def gui(
     pygame.mixer.init()
     pygame.key.set_repeat(300, 20)
 
-    window = sdl2.Window("READER", borderless=True, always_on_top=True)
+    window = sdl2.Window(
+        "READER", borderless=True, always_on_top=True, resizable=True, size=(800, 600)
+    )
     window.get_surface().fill(background_color)
     window.flip()
 
@@ -342,6 +344,8 @@ def gui(
     # %%
     margin = 0.1
     layout.layout(window.size[0] * (1 - margin))
+    print("Layout done")
+
     max_doc_width = 900
     doc_width = min(max_doc_width, window.size[0] * (1 - margin))
 
@@ -352,6 +356,8 @@ def gui(
 
     hovered = None
     follow_read = False
+
+    print("Started")
 
     running = True
     while running:

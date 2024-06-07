@@ -10,6 +10,13 @@ h3:
 h4:
   font_size: 1rem
   color: [21, 101, 192]
+h5:
+  font_size: 0.83rem
+  color: [21, 101, 192]
+h6:
+  font_size: 0.67rem
+  color: [21, 101, 192]
+
 error:
   color: [255, 0, 0]
 hovered:
