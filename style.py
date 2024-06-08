@@ -29,7 +29,6 @@ class FontStyle:
 @dataclass
 class ComputedStyle:
     font: FontStyle
-    indent_size: int
 
 
 class Style:
@@ -107,7 +106,7 @@ class Style:
             raise TypeError(f"Invalid size type: {type(size)}")
 
 
-def _check_css(obj, schema=ComputedStyle, path=()) -> bool:
+def _check_css(obj, schema=ComputedStyle, path=()):
     path_str = ".".join(path)
 
     if is_dataclass(schema):

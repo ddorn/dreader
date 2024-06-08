@@ -155,8 +155,7 @@ class Document:
         write_head = (0, 0)
         indent = 0
         for child in self.children:
-            style = child.compute_style(base_size)
-            indent += style.indent_size
+            indent += child.indent * base_size
             child.layout(indent, width - indent, write_head, base_size)
             write_head = child.continuation_pos
 
@@ -191,10 +190,10 @@ class Document:
             if i >= len(self.children):
                 break
 
-            style = self.children[i].compute_style(base_size)
-            indent += style.indent_size
-            self.children[i].layout(indent, width - indent, write_head, base_size)
-            write_head = self.children[i].continuation_pos
+            child = self.children[i]
+            indent += child.indent * base_size
+            child.layout(indent, width - indent, write_head, base_size)
+            write_head = child.continuation_pos
 
             i += 1
 
@@ -323,9 +322,8 @@ def from_marko(doc, style: Style = Style([])) -> Generator[InlineText, None, Non
 
     show_branches(doc)
 
-    stream = flatten(doc, style)
-    last = next(stream)
-    for child in stream:
+    last = InlineText("dummy", style)
+    for child in flatten(doc, style):
         # We try to merge them into one
         if not last.text and not child.text:
             last.hard_break |= child.hard_break
