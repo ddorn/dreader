@@ -417,7 +417,8 @@ def gui(
 
         screen.fill(background_color)
 
-        doc.update_layout(doc_width, font_size, x_scroll, y_scroll, window.size[1])
+        # doc.update_layout(doc_width, font_size, x_scroll, y_scroll, window.size[1])
+        doc.update_layout_simple(font_size)
         doc.render(x_scroll, y_scroll, screen)
 
         fps_surf = render_simple(f"{1/frame_time:.2f}", 20)

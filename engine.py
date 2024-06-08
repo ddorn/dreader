@@ -9,6 +9,7 @@ from pathlib import Path
 from pprint import pprint
 from typing import Counter, Generator
 
+from bs4 import BeautifulSoup
 import marko.ast_renderer
 import marko.block
 import marko.inline
@@ -40,6 +41,7 @@ class InlineText:
         self.link_to = link_to
         self.anchor = anchor
         self.indent = indent
+        self.dirty = False
 
         # Set by layout()
         self.size = (0, 0)
@@ -63,17 +65,18 @@ class InlineText:
         return f"<InlineText {s[2:]}>"
 
     def compute_style(self, base_size: int) -> ComputedStyle:
-        if self.computed_style is None:
+        if self.computed_style is None or self.dirty:
             self.computed_style = self.style.compute(base_size)
+            self.dirty = False
         return self.computed_style
 
     def add_class(self, cls: str):
         self.style += cls
-        self.computed_style = None
+        self.dirty = True
 
     def remove_class(self, cls: str):
         self.style -= cls
-        self.computed_style = None
+        self.dirty = True
 
     def layout(self, indent: float, width: float, type_head: tuple[int, int], base_size: int):
         style = self.compute_style(base_size)
@@ -163,6 +166,10 @@ class Document:
             child.rect.bottom for child in self.children
         )
 
+    def update_layout_simple(self, base_size: int):
+        for child in self.children:
+            child.compute_style(base_size)
+
     def update_layout(
         self, width: float, base_size: int, scroll_x: float, scroll_y: float, screen_height: int
     ):
@@ -171,6 +178,7 @@ class Document:
         Accomodates changes to local changes such as font size, but not global
         ones such as indent (which can have arbitrary far-reaching effects).
         """
+        # Doesn't quite work. Some scroll or teleport make the app crash.
 
         # Find the first element that is curently visible
         i, node = self.at(-scroll_x, -scroll_y - 100)
@@ -305,6 +313,11 @@ def flatten(node, style: Style) -> Generator[InlineText, None, None]:
                 if not new.link_to:
                     new.link_to = node.dest
                 yield new
+    elif isinstance(node, marko.inline.InlineHTML):
+        html = BeautifulSoup(node.children, "html.parser")
+        print(html)
+        text = html.get_text()
+        yield InlineText(text, style + "html")
     else:
         warnings.warn(f"Unsupported element: {node.__class__.__name__}")
         yield InlineText(f"<{node.__class__.__name__}> ", style + "error", hard_break=True)
