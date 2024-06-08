@@ -44,6 +44,8 @@ from typer import Argument, Option
 import random
 import marko
 
+from tts import TTS, split_long_paragraphs
+
 
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "hide"
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -60,9 +62,6 @@ from engine import Document, Style, InlineText
 ROOT = Path(__file__).parent
 ASSETS = ROOT / "assets"
 FONT = ASSETS / "main.ttf"
-CACHE = ROOT / "cache"
-CACHE_INFO = CACHE / "info.jsonl"
-CACHE.mkdir(exist_ok=True)
 
 
 def color_from_name(name: str) -> tuple[int, int, int]:
@@ -76,202 +75,6 @@ def clamp(value, minimum, maximum):
     if value > maximum:
         return maximum
     return value
-
-
-def to_filename(name: str, max_len: int = 80) -> str:
-    new = "".join(c if c.isalnum() else "_" for c in name[:max_len])
-    return new.replace("__", "_").strip("_")
-
-
-def split_long_paragraphs(text: str, sep=". ") -> list[str]:
-    text = text.strip()
-    if not text:
-        return []
-
-    if len(text) > 4096:
-        last_dot_before = text[:4096].rfind(sep)
-        if last_dot_before == -1:
-            last_dot_before = 4096
-        else:
-            last_dot_before += len(sep)
-        text, rest = text[:last_dot_before], text[last_dot_before:]
-        return [text.strip()] + split_long_paragraphs(rest)
-    return [text]
-
-
-P = ParamSpec("P")
-
-
-def threaded(func: Callable[P, None]) -> Callable[P, threading.Thread]:
-    def wrapper(*args, **kwargs) -> threading.Thread:
-        thread = threading.Thread(target=func, args=args, kwargs=kwargs)
-        thread.start()
-        return thread
-
-    return wrapper  # type: ignore
-
-
-class TTS:
-    def __init__(self, voice="alloy", speed: float = 1.0):
-        self.voice = voice
-        self.speed = speed
-        self.current_loop = None
-        self.currently_read: InlineText | None = None
-
-    @staticmethod
-    def mk_path(text, voice, speed):
-        base = f"{voice}_{speed}_{text}"
-        h = hashlib.md5(base.encode()).hexdigest()
-        return CACHE / (to_filename(f"{h}_{base}") + ".mp3")
-
-    @classmethod
-    async def create_completion(cls, text, voice, speed):
-        path = cls.mk_path(text, voice, speed)
-        if path.exists():
-            print(f"Using cached TTS: {path}")
-            return path
-
-        start = time.time()
-        client = openai.AsyncClient()
-        print(f"Downloading TTS: {path}")
-        async with client.audio.speech.with_streaming_response.create(
-            input=text,
-            model="tts-1",
-            voice=voice,
-            response_format="mp3",
-            speed=speed,
-        ) as response:
-            try:
-                await response.stream_to_file(path)
-            except Exception as e:
-                path.unlink(missing_ok=True)
-                raise e
-        end = time.time()
-
-        metadata = dict(
-            path=path.name,
-            text=text,
-            voice=voice,
-            speed=speed,
-            time_to_generate=end - start,
-            timestamp=time.time(),
-        )
-        pprint(metadata)
-
-        with open(CACHE_INFO, "a") as f:
-            f.write(json.dumps(metadata) + "\n")
-
-        return path
-
-    @staticmethod
-    async def play_delayed(path, delay: float):
-        for tries in range(30):
-            if path.exists():
-                break
-            await asyncio.sleep(delay)
-        else:
-            raise FileNotFoundError(f"Cannot play audio: {path}")
-
-        # We stream the audio to the file, so it might not be fully written yet.
-        # Pygame will wait play only up to what's been generated.
-        # So once pygame is done playing, we restart the audio from the end of what was played.
-        pygame.mixer.music.load(path)
-        pygame.mixer.music.play()
-
-        start = time.time()
-        while True:
-            part_start = time.time()
-            while pygame.mixer.music.get_busy():
-                await asyncio.sleep(0.01)
-
-            print(f"PLAY {time.time() - start:.3f} part: {time.time() - part_start:.3f}")
-            # Just above the 10ms sleep - it did not have much to play -> probably the end
-            if time.time() - part_start < 0.011:
-                print("PLAY DONE")
-                break
-
-            pygame.mixer.music.load(path)
-            pygame.mixer.music.play(start=time.time() - start)
-
-    async def speak(self, text: str):
-
-        parts = split_long_paragraphs(text)
-
-        for part in parts:
-            path = self.mk_path(part, self.voice, self.speed)
-            await asyncio.gather(
-                self.create_completion(part, self.voice, self.speed), self.play_delayed(path, 0.3)
-            )
-
-    async def highlight_spoken(self, layout, paragraph):
-        # Wait for the audio to be started - but no more thn 3 seconds
-        start = time.time()
-        while not pygame.mixer.music.get_busy() and time.time() - start < 3:
-            await asyncio.sleep(0.01)
-
-        CHARS_PER_SECOND = 16.5
-        start = time.time()
-        while pygame.mixer.music.get_busy():
-            time_passed = time.time() - start
-            chars = int(time_passed * CHARS_PER_SECOND)
-
-            # Find the first child that is after the point
-            i = paragraph.start
-            while i < paragraph.end:
-                childs = layout.children[paragraph.start : i + 1]
-                text = "".join(child.text for child in childs)
-                if len(text) >= chars:
-                    break
-                i += 1
-
-            if i == paragraph.end:
-                i -= 1
-
-            self.set_read(layout.children[i])
-
-            await asyncio.sleep(0.1)
-
-        self.set_read(None)
-        print("DONE HIGHLIGHTING", time.time() - start, paragraph)
-
-    def set_read(self, node: InlineText | None):
-        if self.currently_read is not None:
-            self.currently_read.remove_class("reading")
-        if node is not None:
-            node.add_class("reading")
-        self.currently_read = node
-
-    async def read_async(self, doc: Document, start: int = 0):
-        while start < len(doc.children):
-            paragraph = doc.paragraph_around(start)
-
-            await asyncio.gather(
-                self.speak(paragraph.text),
-                self.highlight_spoken(doc, paragraph),
-            )
-
-            start = paragraph.end
-
-    @threaded
-    def read(self, doc: Document, start: int = 0):
-        if self.current_loop is not None:
-            self.stop()
-
-        self.current_loop = asyncio.new_event_loop()
-        try:
-            self.current_loop.run_until_complete(self.read_async(doc, start))
-        except RuntimeError:
-            pass
-
-    def stop(self):
-        if self.current_loop is not None:
-            self.current_loop.stop()
-            while self.current_loop.is_running():
-                time.sleep(0.01)
-            self.current_loop.close()
-            self.current_loop = None
-            self.set_read(None)
-            pygame.mixer.music.stop()
 
 
 SHOW_LOCALS = bool(os.getenv("SHOW_LOCALS", False))
